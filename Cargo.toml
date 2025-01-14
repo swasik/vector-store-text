@@ -1,0 +1,22 @@
+# Copyright 2025-present ScyllaDB
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "scylla-usearch"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "*"
+axum = { version = "*", features = ["macros"] }
+derive_more = { version = "*", features = ["full"] }
+dotenvy = "*"
+futures = "*"
+scylla = "*"
+scylla-cdc = { git = "https://github.com/abastian/scylla-cdc-rust.git", branch = "feature/scylla-0.15.1" }
+serde = { version = "*", features = ["derive"] }
+tokio = { version = "*", features = ["full"] }
+tower-http = { version = "*", features = ["full"] }
+tracing = "*"
+tracing-subscriber = { version = "*", features = ["env-filter"] }
+usearch = "*"

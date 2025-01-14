@@ -1,2 +1,2 @@
-# pattern-scylladb-vector-search
-Pattern for using ScyllaDB as Vector Search Database
+# scylla-usearch
+USearch vector search service for ScyllaDB
