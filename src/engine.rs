@@ -13,6 +13,7 @@ use {
     },
     std::{collections::HashMap, future::Future},
     tokio::sync::{mpsc, oneshot},
+    tracing::{error, warn},
 };
 
 pub(crate) enum Engine {
@@ -77,19 +78,21 @@ impl EngineExt for mpsc::Sender<Engine> {
         col_emb: ColumnName,
         dimensions: Dimensions,
     ) {
-        _ = self
-            .send(Engine::AddIndex {
-                index,
-                table,
-                col_id,
-                col_emb,
-                dimensions,
-            })
-            .await;
+        self.send(Engine::AddIndex {
+            index,
+            table,
+            col_id,
+            col_emb,
+            dimensions,
+        })
+        .await
+        .unwrap_or_else(|err| warn!("EngineExt::add_index: unable to send request: {err}"));
     }
 
     async fn del_index(&self, index: IndexName) {
-        _ = self.send(Engine::DelIndex { index }).await;
+        self.send(Engine::DelIndex { index })
+            .await
+            .unwrap_or_else(|err| warn!("EngineExt::del_index: unable to send request: {err}"));
     }
 
     async fn get_index(&self, index: IndexName) -> Option<mpsc::Sender<Index>> {
@@ -113,7 +116,10 @@ pub(crate) fn new(
         while let Some(msg) = rx.recv().await {
             match msg {
                 Engine::GetIndexes { tx } => {
-                    _ = tx.send(indexes.keys().cloned().collect());
+                    tx.send(indexes.keys().cloned().collect())
+                        .unwrap_or_else(|_| {
+                            warn!("engine::new: Engine::GetIndexes: unable to send response")
+                        });
                 }
                 Engine::AddIndex {
                     index: index_name,
@@ -126,24 +132,30 @@ pub(crate) fn new(
                         continue;
                     }
                     if let Ok((index_actor, index_task)) = index::new(dimensions) {
-                        supervisor_actor
-                            .attach(index_actor.clone(), index_task)
-                            .await;
-                        let (monitor_actor, monitor_task) = monitor::new(
+                        if let Ok((monitor_actor, monitor_task)) = monitor::new(
                             uri.clone(),
                             table.clone(),
                             col_id.clone(),
                             col_emb.clone(),
                             index_actor.clone(),
                         )
-                        .await;
-                        supervisor_actor
-                            .attach(monitor_actor.clone(), monitor_task)
-                            .await;
-                        indexes.insert(index_name.clone(), index_actor);
-                        monitors.insert(index_name, monitor_actor);
+                        .await
+                        {
+                            supervisor_actor
+                                .attach(index_actor.clone(), index_task)
+                                .await;
+                            supervisor_actor
+                                .attach(monitor_actor.clone(), monitor_task)
+                                .await;
+                            indexes.insert(index_name.clone(), index_actor);
+                            monitors.insert(index_name, monitor_actor);
+                        } else {
+                            error!("unable to create monitor with uri {uri}, table {table}, col_id {col_id}, col_emb {col_emb}");
+                            index_actor.actor_stop().await;
+                            index_task.await.unwrap_or_else(|err| warn!("engine::new: Engine::AddIndex: issue while stopping index actor: {err}"));
+                        }
                     } else {
-                        tracing::error!("unable to create index with dimensions {dimensions}");
+                        error!("unable to create index with dimensions {dimensions}");
                     }
                 }
                 Engine::DelIndex { index: index_name } => {
@@ -155,7 +167,9 @@ pub(crate) fn new(
                     }
                 }
                 Engine::GetIndex { index, tx } => {
-                    _ = tx.send(indexes.get(&index).cloned());
+                    tx.send(indexes.get(&index).cloned()).unwrap_or_else(|_| {
+                        warn!("engine::new: Engine::GetIndex: unable to send response")
+                    });
                 }
                 Engine::Stop => {
                     rx.close();

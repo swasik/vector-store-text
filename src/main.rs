@@ -19,19 +19,19 @@ use {
     tracing_subscriber::{fmt, prelude::*, EnvFilter},
 };
 
-#[derive(Clone, derive_more::From)]
+#[derive(Clone, derive_more::From, derive_more::Display)]
 pub(crate) struct ScyllaDbUri(String);
 
 #[derive(Clone, derive_more::From, Hash, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 struct IndexName(String);
 
-#[derive(Clone, derive_more::From, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, derive_more::From, serde::Serialize, serde::Deserialize, derive_more::Display)]
 struct TableName(String);
 
-#[derive(Clone, derive_more::From, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, derive_more::From, serde::Serialize, serde::Deserialize, derive_more::Display)]
 struct ColumnName(String);
 
-#[derive(Clone, serde::Serialize, serde::Deserialize, derive_more::From)]
+#[derive(Clone, serde::Serialize, serde::Deserialize, derive_more::From, derive_more::Display)]
 struct Key(u64);
 
 #[derive(Clone, serde::Serialize, serde::Deserialize, derive_more::From)]
@@ -40,7 +40,7 @@ struct Distance(f32);
 #[derive(Copy, Clone, serde::Serialize, serde::Deserialize, derive_more::Display)]
 struct Dimensions(usize);
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize, derive_more::From)]
 struct Embeddings(Vec<f32>);
 
 #[derive(Clone, serde::Serialize, serde::Deserialize, derive_more::Display)]

@@ -6,11 +6,13 @@
 use {
     crate::{
         actor::{ActorHandle, MessageStop},
-        index::Index,
+        index::{Index, IndexExt},
         ColumnName, ScyllaDbUri, TableName,
     },
+    futures::TryStreamExt,
     scylla::{Session, SessionBuilder},
     tokio::sync::mpsc::{self, Sender},
+    tracing::warn,
 };
 
 pub(crate) enum Monitor {
@@ -32,14 +34,19 @@ async fn new_session(uri: &ScyllaDbUri) -> anyhow::Result<Session> {
 
 pub(crate) async fn new(
     uri: ScyllaDbUri,
-    _table: TableName,
-    _col_id: ColumnName,
-    _col_emb: ColumnName,
-    _index: Sender<Index>,
-) -> (Sender<Monitor>, ActorHandle) {
+    table: TableName,
+    col_id: ColumnName,
+    col_emb: ColumnName,
+    index: Sender<Index>,
+) -> anyhow::Result<(Sender<Monitor>, ActorHandle)> {
+    let session = new_session(&uri).await?;
     let (tx, mut rx) = mpsc::channel(10);
     let task = tokio::spawn(async move {
-        _ = new_session(&uri).await;
+        table_to_index(&session, &table, &col_id, &col_emb, &index)
+            .await
+            .unwrap_or_else(|err| {
+                warn!("monitor::new: unable to copy data from table to index: {err}")
+            });
         while let Some(msg) = rx.recv().await {
             match msg {
                 Monitor::Stop => {
@@ -48,5 +55,25 @@ pub(crate) async fn new(
             }
         }
     });
-    (tx, task)
+    Ok((tx, task))
+}
+
+async fn table_to_index(
+    session: &Session,
+    table: &TableName,
+    col_id: &ColumnName,
+    col_emb: &ColumnName,
+    index: &Sender<Index>,
+) -> anyhow::Result<()> {
+    let mut rows = session
+        .query_iter(format!("SELECT {col_id}, {col_emb} FROM {table}"), &[])
+        .await?
+        .rows_stream::<(i64, Vec<f32>)>()?;
+    while let Some((key, embeddings)) = rows.try_next().await? {
+        if key < 0 {
+            continue;
+        }
+        index.add((key as u64).into(), embeddings.into()).await;
+    }
+    Ok(())
 }

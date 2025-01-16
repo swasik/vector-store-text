@@ -10,10 +10,15 @@ use {
     },
     anyhow::anyhow,
     tokio::sync::{mpsc, oneshot},
+    tracing::warn,
     usearch::IndexOptions,
 };
 
 pub(crate) enum Index {
+    Add {
+        key: Key,
+        embeddings: Embeddings,
+    },
     Ann {
         embeddings: Embeddings,
         limit: Limit,
@@ -29,6 +34,7 @@ impl MessageStop for Index {
 }
 
 pub(crate) trait IndexExt {
+    async fn add(&self, key: Key, embeddings: Embeddings);
     async fn ann(
         &self,
         embeddings: Embeddings,
@@ -37,6 +43,12 @@ pub(crate) trait IndexExt {
 }
 
 impl IndexExt for mpsc::Sender<Index> {
+    async fn add(&self, key: Key, embeddings: Embeddings) {
+        self.send(Index::Add { key, embeddings })
+            .await
+            .unwrap_or_else(|err| warn!("IndexExt::add: unable to send request: {err}"));
+    }
+
     async fn ann(
         &self,
         embeddings: Embeddings,
@@ -64,12 +76,19 @@ pub(crate) fn new(dimensions: Dimensions) -> anyhow::Result<(mpsc::Sender<Index>
     let task = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
             match msg {
+                Index::Add { key, embeddings } => {
+                    idx.add(key.0, &embeddings.0).unwrap_or_else(|err| {
+                        warn!(
+                            "index::new: Index::add: unable to add embeddings for key {key}: {err}"
+                        )
+                    });
+                }
                 Index::Ann {
                     embeddings,
                     limit,
                     tx,
                 } => {
-                    _ = tx.send(if embeddings.0.len() != dimensions.0 {
+                    tx.send(if embeddings.0.len() != dimensions.0 {
                         Err(anyhow!(
                             "index ann query: wrong embeddings dimensions: {} != {dimensions}",
                             embeddings.0.len()
@@ -85,7 +104,8 @@ pub(crate) fn new(dimensions: Dimensions) -> anyhow::Result<(mpsc::Sender<Index>
                             .collect())
                     } else {
                         Err(anyhow!("index ann query: search failed"))
-                    });
+                    })
+                    .unwrap_or_else(|_| warn!("index::new: Index::Ann: unable to send response"));
                 }
                 Index::Stop => {
                     rx.close();

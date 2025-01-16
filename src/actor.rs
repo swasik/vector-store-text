@@ -6,6 +6,7 @@
 use {
     std::future::Future,
     tokio::{sync::mpsc::Sender, task::JoinHandle},
+    tracing::warn,
 };
 
 pub type ActorHandle = JoinHandle<()>;
@@ -16,7 +17,9 @@ pub trait ActorStop {
 
 impl<T: MessageStop> ActorStop for Sender<T> {
     async fn actor_stop(&self) {
-        _ = self.send(T::message_stop()).await;
+        self.send(T::message_stop())
+            .await
+            .unwrap_or_else(|err| warn!("ActorStop: unable to send message: {err}"));
     }
 }
 
