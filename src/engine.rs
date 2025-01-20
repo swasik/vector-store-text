@@ -7,9 +7,10 @@ use {
     crate::{
         actor::{ActorHandle, ActorStop, MessageStop},
         index::{self, Index},
-        monitor,
+        modify_indexes::{self, ModifyIndexesExt},
+        monitor_indexes, monitor_items,
         supervisor::{Supervisor, SupervisorExt},
-        ColumnName, Dimensions, IndexName, ScyllaDbUri, TableName,
+        ColumnName, Connectivity, Dimensions, ExpansionAdd, IndexId, ScyllaDbUri, TableName,
     },
     std::{collections::HashMap, future::Future},
     tokio::sync::{mpsc, oneshot},
@@ -18,20 +19,22 @@ use {
 
 pub(crate) enum Engine {
     GetIndexes {
-        tx: oneshot::Sender<Vec<IndexName>>,
+        tx: oneshot::Sender<Vec<IndexId>>,
     },
     AddIndex {
-        index: IndexName,
+        id: IndexId,
         table: TableName,
         col_id: ColumnName,
         col_emb: ColumnName,
         dimensions: Dimensions,
+        connectivity: Connectivity,
+        expansion_add: ExpansionAdd,
     },
     DelIndex {
-        index: IndexName,
+        id: IndexId,
     },
     GetIndex {
-        index: IndexName,
+        id: IndexId,
         tx: oneshot::Sender<Option<mpsc::Sender<Index>>>,
     },
     Stop,
@@ -44,24 +47,23 @@ impl MessageStop for Engine {
 }
 
 pub(crate) trait EngineExt {
-    async fn get_indexes(&self) -> Vec<IndexName>;
+    async fn get_indexes(&self) -> Vec<IndexId>;
     async fn add_index(
         &self,
-        index: IndexName,
+        id: IndexId,
         table: TableName,
         col_id: ColumnName,
         col_emb: ColumnName,
         dimensions: Dimensions,
+        connectivity: Connectivity,
+        expansion_add: ExpansionAdd,
     );
-    async fn del_index(&self, index: IndexName);
-    fn get_index(
-        &self,
-        index: IndexName,
-    ) -> impl Future<Output = Option<mpsc::Sender<Index>>> + Send;
+    async fn del_index(&self, id: IndexId);
+    fn get_index(&self, id: IndexId) -> impl Future<Output = Option<mpsc::Sender<Index>>> + Send;
 }
 
 impl EngineExt for mpsc::Sender<Engine> {
-    async fn get_indexes(&self) -> Vec<IndexName> {
+    async fn get_indexes(&self) -> Vec<IndexId> {
         let (tx, rx) = oneshot::channel();
         if self.send(Engine::GetIndexes { tx }).await.is_ok() {
             rx.await.unwrap_or(Vec::new())
@@ -72,32 +74,36 @@ impl EngineExt for mpsc::Sender<Engine> {
 
     async fn add_index(
         &self,
-        index: IndexName,
+        id: IndexId,
         table: TableName,
         col_id: ColumnName,
         col_emb: ColumnName,
         dimensions: Dimensions,
+        connectivity: Connectivity,
+        expansion_add: ExpansionAdd,
     ) {
         self.send(Engine::AddIndex {
-            index,
+            id,
             table,
             col_id,
             col_emb,
             dimensions,
+            connectivity,
+            expansion_add,
         })
         .await
         .unwrap_or_else(|err| warn!("EngineExt::add_index: unable to send request: {err}"));
     }
 
-    async fn del_index(&self, index: IndexName) {
-        self.send(Engine::DelIndex { index })
+    async fn del_index(&self, id: IndexId) {
+        self.send(Engine::DelIndex { id })
             .await
             .unwrap_or_else(|err| warn!("EngineExt::del_index: unable to send request: {err}"));
     }
 
-    async fn get_index(&self, index: IndexName) -> Option<mpsc::Sender<Index>> {
+    async fn get_index(&self, id: IndexId) -> Option<mpsc::Sender<Index>> {
         let (tx, rx) = oneshot::channel();
-        if self.send(Engine::GetIndex { index, tx }).await.is_ok() {
+        if self.send(Engine::GetIndex { id, tx }).await.is_ok() {
             rx.await.ok().flatten()
         } else {
             None
@@ -105,11 +111,17 @@ impl EngineExt for mpsc::Sender<Engine> {
     }
 }
 
-pub(crate) fn new(
+pub(crate) async fn new(
     uri: ScyllaDbUri,
     supervisor_actor: mpsc::Sender<Supervisor>,
-) -> (mpsc::Sender<Engine>, ActorHandle) {
+) -> anyhow::Result<(mpsc::Sender<Engine>, ActorHandle)> {
     let (tx, mut rx) = mpsc::channel(10);
+    let (monitor_actor, monitor_task) = monitor_indexes::new(uri.clone(), tx.clone()).await?;
+    supervisor_actor.attach(monitor_actor, monitor_task).await;
+    let (modify_actor, modify_task) = modify_indexes::new(uri.clone()).await?;
+    supervisor_actor
+        .attach(modify_actor.clone(), modify_task)
+        .await;
     let task = tokio::spawn(async move {
         let mut indexes = HashMap::new();
         let mut monitors = HashMap::new();
@@ -122,24 +134,32 @@ pub(crate) fn new(
                         });
                 }
                 Engine::AddIndex {
-                    index: index_name,
+                    id,
                     table,
                     col_id,
                     col_emb,
                     dimensions,
+                    connectivity,
+                    expansion_add,
                 } => {
-                    if indexes.contains_key(&index_name) {
+                    if indexes.contains_key(&id) {
                         continue;
                     }
-                    if let Ok((index_actor, index_task)) = index::new(dimensions) {
-                        if let Ok((monitor_actor, monitor_task)) = monitor::new(
+                    if let Ok((index_actor, index_task)) = index::new(
+                        id,
+                        modify_actor.clone(),
+                        dimensions,
+                        connectivity,
+                        expansion_add,
+                    ) {
+                        if let Ok((monitor_actor, monitor_task)) = monitor_items::new(
                             uri.clone(),
                             table.clone(),
                             col_id.clone(),
                             col_emb.clone(),
                             index_actor.clone(),
                         )
-                        .await
+                        .await.inspect_err(|err| error!("unable to create monitor with uri {uri}, table {table}, col_id {col_id}, col_emb {col_emb}: {err}"))
                         {
                             supervisor_actor
                                 .attach(index_actor.clone(), index_task)
@@ -147,10 +167,9 @@ pub(crate) fn new(
                             supervisor_actor
                                 .attach(monitor_actor.clone(), monitor_task)
                                 .await;
-                            indexes.insert(index_name.clone(), index_actor);
-                            monitors.insert(index_name, monitor_actor);
+                            indexes.insert(id, index_actor);
+                            monitors.insert(id, monitor_actor);
                         } else {
-                            error!("unable to create monitor with uri {uri}, table {table}, col_id {col_id}, col_emb {col_emb}");
                             index_actor.actor_stop().await;
                             index_task.await.unwrap_or_else(|err| warn!("engine::new: Engine::AddIndex: issue while stopping index actor: {err}"));
                         }
@@ -158,24 +177,23 @@ pub(crate) fn new(
                         error!("unable to create index with dimensions {dimensions}");
                     }
                 }
-                Engine::DelIndex { index: index_name } => {
-                    if let Some(index) = indexes.remove(&index_name) {
+                Engine::DelIndex { id } => {
+                    if let Some(index) = indexes.remove(&id) {
                         index.actor_stop().await;
                     }
-                    if let Some(monitor) = monitors.remove(&index_name) {
+                    if let Some(monitor) = monitors.remove(&id) {
                         monitor.actor_stop().await;
                     }
+                    modify_actor.del(id).await;
                 }
-                Engine::GetIndex { index, tx } => {
-                    tx.send(indexes.get(&index).cloned()).unwrap_or_else(|_| {
+                Engine::GetIndex { id, tx } => {
+                    tx.send(indexes.get(&id).cloned()).unwrap_or_else(|_| {
                         warn!("engine::new: Engine::GetIndex: unable to send response")
                     });
                 }
-                Engine::Stop => {
-                    rx.close();
-                }
+                Engine::Stop => rx.close(),
             }
         }
     });
-    (tx, task)
+    Ok((tx, task))
 }

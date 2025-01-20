@@ -12,6 +12,7 @@ axum = { version = "*", features = ["macros"] }
 derive_more = { version = "*", features = ["full"] }
 dotenvy = "*"
 futures = "*"
+itertools = "*"
 scylla = "*"
 scylla-cdc = { git = "https://github.com/abastian/scylla-cdc-rust.git", branch = "feature/scylla-0.15.1" }
 serde = { version = "*", features = ["derive"] }

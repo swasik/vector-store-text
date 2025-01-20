@@ -6,7 +6,9 @@
 use {
     crate::{
         actor::{ActorHandle, MessageStop},
-        Dimensions, Distance, Embeddings, Key, Limit,
+        modify_indexes::{ModifyIndexes, ModifyIndexesExt},
+        Connectivity, Dimensions, Distance, Embeddings, ExpansionAdd, IndexId, IndexItemsCount,
+        Key, Limit,
     },
     anyhow::anyhow,
     tokio::sync::{mpsc, oneshot},
@@ -65,15 +67,25 @@ impl IndexExt for mpsc::Sender<Index> {
     }
 }
 
-pub(crate) fn new(dimensions: Dimensions) -> anyhow::Result<(mpsc::Sender<Index>, ActorHandle)> {
+pub(crate) fn new(
+    id: IndexId,
+    modify_actor: mpsc::Sender<ModifyIndexes>,
+    dimensions: Dimensions,
+    connectivity: Connectivity,
+    expansion_add: ExpansionAdd,
+) -> anyhow::Result<(mpsc::Sender<Index>, ActorHandle)> {
     let options = IndexOptions {
         dimensions: dimensions.0,
+        connectivity: connectivity.0,
+        expansion_add: expansion_add.0,
         ..Default::default()
     };
     let idx = usearch::Index::new(&options)?;
     idx.reserve(1000)?;
     let (tx, mut rx) = mpsc::channel(10);
     let task = tokio::spawn(async move {
+        let mut items_count = IndexItemsCount(0);
+        modify_actor.update_items_count(id, items_count).await;
         while let Some(msg) = rx.recv().await {
             match msg {
                 Index::Add { key, embeddings } => {
@@ -82,6 +94,8 @@ pub(crate) fn new(dimensions: Dimensions) -> anyhow::Result<(mpsc::Sender<Index>
                             "index::new: Index::add: unable to add embeddings for key {key}: {err}"
                         )
                     });
+                    items_count.0 += 1;
+                    modify_actor.update_items_count(id, items_count).await;
                 }
                 Index::Ann {
                     embeddings,

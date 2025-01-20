@@ -7,7 +7,8 @@ use {
     crate::{
         engine::{Engine, EngineExt},
         index::IndexExt,
-        ColumnName, Dimensions, Distance, Embeddings, IndexName, Key, Limit, TableName,
+        ColumnName, Connectivity, Dimensions, Distance, Embeddings, ExpansionAdd, IndexId, Key,
+        Limit, TableName,
     },
     axum::{
         extract::{self, Path, State},
@@ -24,14 +25,14 @@ pub(crate) fn new(engine: Sender<Engine>) -> Router {
     Router::new()
         .route("/", get("OK"))
         .route("/indexes", get(get_indexes))
-        .route("/indexes/{index}", put(put_index).delete(del_index))
-        .route("/indexes/{index}/ann", post(post_index_ann))
-        .route("/indexes/{index}/status", get(get_index_status))
+        .route("/indexes/{id}", put(put_index).delete(del_index))
+        .route("/indexes/{id}/ann", post(post_index_ann))
+        .route("/indexes/{id}/status", get(get_index_status))
         .layer(TraceLayer::new_for_http())
         .with_state(engine)
 }
 
-async fn get_indexes(State(engine): State<Sender<Engine>>) -> response::Json<Vec<IndexName>> {
+async fn get_indexes(State(engine): State<Sender<Engine>>) -> response::Json<Vec<IndexId>> {
     response::Json(engine.get_indexes().await)
 }
 
@@ -41,26 +42,30 @@ struct PutIndexPayload {
     col_id: ColumnName,
     col_emb: ColumnName,
     dimensions: Dimensions,
+    connectivity: Connectivity,
+    expansion_add: ExpansionAdd,
 }
 
 async fn put_index(
     State(engine): State<Sender<Engine>>,
-    Path(index): Path<IndexName>,
+    Path(id): Path<IndexId>,
     extract::Json(payload): extract::Json<PutIndexPayload>,
 ) {
     engine
         .add_index(
-            index,
+            id,
             payload.table,
             payload.col_id,
             payload.col_emb,
             payload.dimensions,
+            payload.connectivity,
+            payload.expansion_add,
         )
         .await;
 }
 
-async fn del_index(State(engine): State<Sender<Engine>>, Path(index): Path<IndexName>) {
-    engine.del_index(index).await;
+async fn del_index(State(engine): State<Sender<Engine>>, Path(id): Path<IndexId>) {
+    engine.del_index(id).await;
 }
 
 #[derive(serde::Deserialize)]
@@ -83,10 +88,10 @@ struct PostIndexAnnResponse {
 #[axum::debug_handler]
 async fn post_index_ann(
     State(engine): State<Sender<Engine>>,
-    Path(index_name): Path<IndexName>,
+    Path(id): Path<IndexId>,
     extract::Json(request): extract::Json<PostIndexAnnRequest>,
 ) -> Response {
-    let Some(index) = engine.get_index(index_name).await else {
+    let Some(index) = engine.get_index(id).await else {
         return (StatusCode::NOT_FOUND, "").into_response();
     };
     match index.ann(request.embeddings, request.limit).await {
@@ -106,9 +111,9 @@ async fn post_index_ann(
 
 async fn get_index_status(
     State(engine): State<Sender<Engine>>,
-    Path(index_name): Path<IndexName>,
+    Path(id): Path<IndexId>,
 ) -> Response {
-    let Some(_index) = engine.get_index(index_name).await else {
+    let Some(_index) = engine.get_index(id).await else {
         return (StatusCode::NOT_FOUND, "").into_response();
     };
     (StatusCode::OK, "Not implemented index status").into_response()
