@@ -11,6 +11,7 @@ mod index;
 mod modify_indexes;
 mod monitor_indexes;
 mod monitor_items;
+mod monitor_queries;
 mod supervisor;
 
 use {
@@ -33,11 +34,69 @@ use {
 pub(crate) struct ScyllaDbUri(String);
 
 #[derive(
-    Copy, Clone, Hash, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, derive_more::From,
+    Copy,
+    Clone,
+    Hash,
+    Eq,
+    PartialEq,
+    Debug,
+    serde::Serialize,
+    serde::Deserialize,
+    derive_more::From,
+    derive_more::Display,
 )]
 struct IndexId(i32);
 
 impl SerializeValue for IndexId {
+    fn serialize<'b>(
+        &self,
+        typ: &ColumnType,
+        writer: CellWriter<'b>,
+    ) -> Result<WrittenCellProof<'b>, SerializationError> {
+        use {
+            scylla::serialize::value::{
+                BuiltinSerializationError, BuiltinSerializationErrorKind, BuiltinTypeCheckError,
+                BuiltinTypeCheckErrorKind,
+            },
+            std::any,
+        };
+
+        match typ {
+            ColumnType::Int => writer
+                .set_value(self.0.to_be_bytes().as_slice())
+                .map_err(|_| {
+                    SerializationError::new(BuiltinSerializationError {
+                        rust_name: any::type_name::<Self>(),
+                        got: typ.clone().into_owned(),
+                        kind: BuiltinSerializationErrorKind::ValueOverflow,
+                    })
+                }),
+            _ => Err(SerializationError::new(BuiltinTypeCheckError {
+                rust_name: any::type_name::<Self>(),
+                got: typ.clone().into_owned(),
+                kind: BuiltinTypeCheckErrorKind::MismatchedType {
+                    expected: &[ColumnType::Int],
+                },
+            })),
+        }
+    }
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Hash,
+    Eq,
+    PartialEq,
+    Debug,
+    serde::Serialize,
+    serde::Deserialize,
+    derive_more::From,
+    derive_more::Display,
+)]
+struct QueryId(i32);
+
+impl SerializeValue for QueryId {
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
@@ -79,7 +138,13 @@ struct TableName(String);
 struct ColumnName(String);
 
 #[derive(
-    Copy, Clone, serde::Serialize, serde::Deserialize, derive_more::From, derive_more::Display,
+    Copy,
+    Clone,
+    Debug,
+    serde::Serialize,
+    serde::Deserialize,
+    derive_more::From,
+    derive_more::Display,
 )]
 struct Key(u64);
 
@@ -118,8 +183,43 @@ impl SerializeValue for Key {
     }
 }
 
-#[derive(Clone, serde::Serialize, serde::Deserialize, derive_more::From)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, derive_more::From)]
 struct Distance(f32);
+
+impl SerializeValue for Distance {
+    fn serialize<'b>(
+        &self,
+        typ: &ColumnType,
+        writer: CellWriter<'b>,
+    ) -> Result<WrittenCellProof<'b>, SerializationError> {
+        use {
+            scylla::serialize::value::{
+                BuiltinSerializationError, BuiltinSerializationErrorKind, BuiltinTypeCheckError,
+                BuiltinTypeCheckErrorKind,
+            },
+            std::any,
+        };
+
+        match typ {
+            ColumnType::Float => writer
+                .set_value(self.0.to_be_bytes().as_slice())
+                .map_err(|_| {
+                    SerializationError::new(BuiltinSerializationError {
+                        rust_name: any::type_name::<Self>(),
+                        got: typ.clone().into_owned(),
+                        kind: BuiltinSerializationErrorKind::ValueOverflow,
+                    })
+                }),
+            _ => Err(SerializationError::new(BuiltinTypeCheckError {
+                rust_name: any::type_name::<Self>(),
+                got: typ.clone().into_owned(),
+                kind: BuiltinTypeCheckErrorKind::MismatchedType {
+                    expected: &[ColumnType::Float],
+                },
+            })),
+        }
+    }
+}
 
 #[derive(
     Copy, Clone, serde::Serialize, serde::Deserialize, derive_more::From, derive_more::Display,
@@ -184,7 +284,7 @@ struct ParamM(usize);
 #[derive(Clone, serde::Serialize, serde::Deserialize, derive_more::From)]
 struct Embeddings(Vec<f32>);
 
-#[derive(Clone, serde::Serialize, serde::Deserialize, derive_more::Display)]
+#[derive(Clone, serde::Serialize, serde::Deserialize, derive_more::Display, derive_more::From)]
 struct Limit(usize);
 
 #[derive(derive_more::From)]

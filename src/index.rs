@@ -24,7 +24,7 @@ pub(crate) enum Index {
     Ann {
         embeddings: Embeddings,
         limit: Limit,
-        tx: oneshot::Sender<anyhow::Result<Vec<(Key, Distance)>>>,
+        tx: oneshot::Sender<anyhow::Result<(Vec<Key>, Vec<Distance>)>>,
     },
     Stop,
 }
@@ -41,7 +41,7 @@ pub(crate) trait IndexExt {
         &self,
         embeddings: Embeddings,
         limit: Limit,
-    ) -> anyhow::Result<Vec<(Key, Distance)>>;
+    ) -> anyhow::Result<(Vec<Key>, Vec<Distance>)>;
 }
 
 impl IndexExt for mpsc::Sender<Index> {
@@ -55,7 +55,7 @@ impl IndexExt for mpsc::Sender<Index> {
         &self,
         embeddings: Embeddings,
         limit: Limit,
-    ) -> anyhow::Result<Vec<(Key, Distance)>> {
+    ) -> anyhow::Result<(Vec<Key>, Vec<Distance>)> {
         let (tx, rx) = oneshot::channel();
         self.send(Index::Ann {
             embeddings,
@@ -110,12 +110,14 @@ pub(crate) fn new(
                     } else if limit.0 < 1 {
                         Err(anyhow!("index ann query: wrong limit value {limit}"))
                     } else if let Ok(results) = idx.search(&embeddings.0, limit.0) {
-                        Ok(results
-                            .keys
-                            .into_iter()
-                            .map(|key| key.into())
-                            .zip(results.distances.into_iter().map(|value| value.into()))
-                            .collect())
+                        Ok((
+                            results.keys.into_iter().map(|key| key.into()).collect(),
+                            results
+                                .distances
+                                .into_iter()
+                                .map(|value| value.into())
+                                .collect(),
+                        ))
                     } else {
                         Err(anyhow!("index ann query: search failed"))
                     })

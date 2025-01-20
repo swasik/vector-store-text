@@ -96,11 +96,11 @@ async fn post_index_ann(
     };
     match index.ann(request.embeddings, request.limit).await {
         Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
-        Ok(result) => (
+        Ok((keys, distances)) => (
             StatusCode::OK,
             response::Json(
-                result
-                    .into_iter()
+                keys.into_iter()
+                    .zip(distances.into_iter())
                     .map(|(key, distance)| PostIndexAnnResponse { key, distance })
                     .collect::<Vec<_>>(),
             ),

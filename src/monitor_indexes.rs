@@ -58,9 +58,8 @@ pub(crate) async fn new(
                 .filter(|id| !cancelled.contains(id))
                 .collect();
             if !rx.is_empty() {
-                match rx.recv().await {
-                    Some(MonitorIndexes::Stop) => rx.close(),
-                    _ => {}
+                if let Some(MonitorIndexes::Stop) = rx.recv().await {
+                    rx.close();
                 }
             }
         }
@@ -181,6 +180,7 @@ async fn add_indexes(db: &Db, engine: &Sender<Engine>, ids: impl Iterator<Item =
             .await;
     }
 }
+
 async fn del_indexes(engine: &Sender<Engine>, ids: impl Iterator<Item = &IndexId>) {
     for id in ids {
         engine.del_index(*id).await;

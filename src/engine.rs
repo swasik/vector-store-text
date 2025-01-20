@@ -8,7 +8,7 @@ use {
         actor::{ActorHandle, ActorStop, MessageStop},
         index::{self, Index},
         modify_indexes::{self, ModifyIndexesExt},
-        monitor_indexes, monitor_items,
+        monitor_indexes, monitor_items, monitor_queries,
         supervisor::{Supervisor, SupervisorExt},
         ColumnName, Connectivity, Dimensions, ExpansionAdd, IndexId, ScyllaDbUri, TableName,
     },
@@ -48,6 +48,7 @@ impl MessageStop for Engine {
 
 pub(crate) trait EngineExt {
     async fn get_indexes(&self) -> Vec<IndexId>;
+    #[allow(clippy::too_many_arguments)] // TODO: support for table params is experimental
     async fn add_index(
         &self,
         id: IndexId,
@@ -122,6 +123,8 @@ pub(crate) async fn new(
     supervisor_actor
         .attach(modify_actor.clone(), modify_task)
         .await;
+    let (monitor_actor, monitor_task) = monitor_queries::new(uri.clone(), tx.clone()).await?;
+    supervisor_actor.attach(monitor_actor, monitor_task).await;
     let task = tokio::spawn(async move {
         let mut indexes = HashMap::new();
         let mut monitors = HashMap::new();

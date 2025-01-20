@@ -7,12 +7,12 @@ use {
     crate::{
         actor::{ActorHandle, MessageStop},
         index::{Index, IndexExt},
-        ColumnName, Key, ScyllaDbUri, TableName,
+        ColumnName, Embeddings, Key, ScyllaDbUri, TableName,
     },
     anyhow::Context,
-    futures::TryStreamExt,
+    futures::{Stream, TryStreamExt},
     scylla::{
-        prepared_statement::PreparedStatement, transport::iterator::TypedRowStream, Session,
+        prepared_statement::PreparedStatement, transport::errors::QueryError, Session,
         SessionBuilder,
     },
     tokio::{
@@ -114,12 +114,15 @@ impl Db {
             "
         )
     }
-    async fn get_processed_ids(&self) -> anyhow::Result<TypedRowStream<(i64,)>> {
+    async fn get_processed_ids(
+        &self,
+    ) -> anyhow::Result<impl Stream<Item = Result<Key, QueryError>>> {
         Ok(self
             .session
             .execute_iter(self.st_get_processed_ids.clone(), ())
             .await?
-            .rows_stream::<(i64,)>()?)
+            .rows_stream::<(i64,)>()?
+            .map_ok(|(key,)| (key as u64).into()))
     }
 
     fn get_items_query(table: &TableName, col_id: &ColumnName, col_emb: &ColumnName) -> String {
@@ -132,12 +135,15 @@ impl Db {
             "
         )
     }
-    async fn get_items(&self) -> anyhow::Result<TypedRowStream<(i64, Vec<f32>)>> {
+    async fn get_items(
+        &self,
+    ) -> anyhow::Result<impl Stream<Item = Result<(Key, Embeddings), QueryError>>> {
         Ok(self
             .session
             .execute_iter(self.st_get_items.clone(), ())
             .await?
-            .rows_stream::<(i64, Vec<f32>)>()?)
+            .rows_stream::<(i64, Vec<f32>)>()?
+            .map_ok(|(key, embeddings)| ((key as u64).into(), embeddings.into())))
     }
 
     fn reset_item_query(table: &TableName) -> String {
@@ -178,29 +184,22 @@ async fn reset_items(db: &Db) -> anyhow::Result<()> {
     let mut processed = true;
     while processed {
         processed = false;
-        while let Some((key,)) = rows.try_next().await? {
-            if key < 0 {
-                continue;
-            }
+        while let Some(key) = rows.try_next().await? {
             processed = true;
-            let key = (key as u64).into();
             db.reset_item(key).await?;
         }
     }
     Ok(())
 }
+
 async fn table_to_index(db: &Db, index: &Sender<Index>) -> anyhow::Result<()> {
     let mut rows = db.get_items().await?;
     let mut processed = true;
     while processed {
         processed = false;
         while let Some((key, embeddings)) = rows.try_next().await? {
-            if key < 0 {
-                continue;
-            }
             processed = true;
-            let key = (key as u64).into();
-            index.add(key, embeddings.into()).await;
+            index.add(key, embeddings).await;
             db.update_item(key).await?;
         }
     }
