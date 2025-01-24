@@ -262,17 +262,35 @@ impl SerializeValue for IndexItemsCount {
 }
 
 #[derive(
-    Copy, Clone, serde::Serialize, serde::Deserialize, derive_more::From, derive_more::Display,
+    Copy,
+    Clone,
+    Debug,
+    serde::Serialize,
+    serde::Deserialize,
+    derive_more::From,
+    derive_more::Display,
 )]
 struct Dimensions(usize);
 
 #[derive(
-    Copy, Clone, serde::Serialize, serde::Deserialize, derive_more::From, derive_more::Display,
+    Copy,
+    Clone,
+    Debug,
+    serde::Serialize,
+    serde::Deserialize,
+    derive_more::From,
+    derive_more::Display,
 )]
 struct Connectivity(usize);
 
 #[derive(
-    Copy, Clone, serde::Serialize, serde::Deserialize, derive_more::From, derive_more::Display,
+    Copy,
+    Clone,
+    Debug,
+    serde::Serialize,
+    serde::Deserialize,
+    derive_more::From,
+    derive_more::Display,
 )]
 struct ExpansionAdd(usize);
 
@@ -281,7 +299,7 @@ struct ExpansionAdd(usize);
 )]
 struct ParamM(usize);
 
-#[derive(Clone, serde::Serialize, serde::Deserialize, derive_more::From)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, derive_more::From)]
 struct Embeddings(Vec<f32>);
 
 #[derive(Clone, serde::Serialize, serde::Deserialize, derive_more::Display, derive_more::From)]
@@ -308,6 +326,12 @@ async fn main() -> anyhow::Result<()> {
     let scylladb_uri = dotenvy::var("SCYLLADB_URI")
         .unwrap_or("127.0.0.1:9042".to_string())
         .into();
+    let background_threads = dotenvy::var("SCYLLA_USEARCH_BACKGROUND_THREADS")
+        .unwrap_or("10".to_string())
+        .parse()?;
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(background_threads)
+        .build_global()?;
     let (supervisor_actor, supervisor_handle) = supervisor::new();
     let (engine_actor, engine_task) = engine::new(scylladb_uri, supervisor_actor.clone()).await?;
     supervisor_actor

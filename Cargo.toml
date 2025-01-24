@@ -13,6 +13,7 @@ derive_more = { version = "*", features = ["full"] }
 dotenvy = "*"
 futures = "*"
 itertools = "*"
+rayon = "*"
 scylla = "*"
 scylla-cdc = { git = "https://github.com/abastian/scylla-cdc-rust.git", branch = "feature/scylla-0.15.1" }
 serde = { version = "*", features = ["derive"] }

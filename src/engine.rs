@@ -133,7 +133,7 @@ pub(crate) async fn new(
                 Engine::GetIndexes { tx } => {
                     tx.send(indexes.keys().cloned().collect())
                         .unwrap_or_else(|_| {
-                            warn!("engine::new: Engine::GetIndexes: unable to send response")
+                            warn!("engine::Engine::GetIndexes: unable to send response")
                         });
                 }
                 Engine::AddIndex {
@@ -162,7 +162,7 @@ pub(crate) async fn new(
                             col_emb.clone(),
                             index_actor.clone(),
                         )
-                        .await.inspect_err(|err| error!("unable to create monitor with uri {uri}, table {table}, col_id {col_id}, col_emb {col_emb}: {err}"))
+                        .await.inspect_err(|err| error!("unable to create monitor items with uri {uri}, table {table}, col_id {col_id}, col_emb {col_emb}: {err}"))
                         {
                             supervisor_actor
                                 .attach(index_actor.clone(), index_task)
@@ -174,7 +174,7 @@ pub(crate) async fn new(
                             monitors.insert(id, monitor_actor);
                         } else {
                             index_actor.actor_stop().await;
-                            index_task.await.unwrap_or_else(|err| warn!("engine::new: Engine::AddIndex: issue while stopping index actor: {err}"));
+                            index_task.await.unwrap_or_else(|err| warn!("engine::Engine::AddIndex: issue while stopping index actor: {err}"));
                         }
                     } else {
                         error!("unable to create index with dimensions {dimensions}");
@@ -191,7 +191,7 @@ pub(crate) async fn new(
                 }
                 Engine::GetIndex { id, tx } => {
                     tx.send(indexes.get(&id).cloned()).unwrap_or_else(|_| {
-                        warn!("engine::new: Engine::GetIndex: unable to send response")
+                        warn!("engine::Engine::GetIndex: unable to send response")
                     });
                 }
                 Engine::Stop => rx.close(),

@@ -15,11 +15,12 @@ use {
         prepared_statement::PreparedStatement, transport::errors::QueryError, Session,
         SessionBuilder,
     },
+    std::sync::Arc,
     tokio::{
         sync::mpsc::{self, Sender},
         time,
     },
-    tracing::warn,
+    tracing::{debug, info, info_span, warn, Instrument},
 };
 
 pub(crate) enum MonitorItems {
@@ -39,19 +40,29 @@ pub(crate) async fn new(
     col_emb: ColumnName,
     index: Sender<Index>,
 ) -> anyhow::Result<(Sender<MonitorItems>, ActorHandle)> {
-    let db = Db::new(uri, table, col_id, col_emb).await?;
+    let db = Arc::new(Db::new(uri, table, col_id, col_emb).await?);
     let (tx, mut rx) = mpsc::channel(10);
     let task = tokio::spawn(async move {
-        reset_items(&db)
-            .await
-            .unwrap_or_else(|err| warn!("monitor::new: unable to reset items in table: {err}"));
-        let mut interval = time::interval(time::Duration::from_secs(1));
+        info!("resetting items");
+        let mut state = State::Reset;
+        let mut interval = time::interval(time::Duration::from_nanos(1));
         while !rx.is_closed() {
             tokio::select! {
                 _ = interval.tick() => {
-                    table_to_index(&db, &index).await.unwrap_or_else(|err| {
-                        warn!("monitor::new: unable to copy data from table to index: {err}")
-                    });
+                    match state {
+                        State::Reset => if !reset_items(&db)
+                            .await
+                            .unwrap_or_else(|err| {
+                                warn!("monitor_items: unable to reset items in table: {err}");
+                                false
+                            }) {
+                                info!("copying items");
+                                state = State::Copy;
+                            },
+                        State::Copy => table_to_index(&db, &index).await.unwrap_or_else(|err| {
+                            warn!("monitor_items: unable to copy data from table to index: {err}")
+                        }),
+                    }
                 }
                 Some(msg) = rx.recv() => {
                     match msg {
@@ -60,15 +71,20 @@ pub(crate) async fn new(
                 }
             }
         }
-    });
+    }.instrument(info_span!("monitor items")));
     Ok((tx, task))
+}
+
+enum State {
+    Reset,
+    Copy,
 }
 
 struct Db {
     session: Session,
     st_get_processed_ids: PreparedStatement,
     st_get_items: PreparedStatement,
-    st_reset_item: PreparedStatement,
+    st_reset_items: PreparedStatement,
     st_update_item: PreparedStatement,
 }
 
@@ -92,10 +108,10 @@ impl Db {
                 .prepare(Self::get_items_query(&table, &col_id, &col_emb))
                 .await
                 .context("get_items_query")?,
-            st_reset_item: session
-                .prepare(Self::reset_item_query(&table))
+            st_reset_items: session
+                .prepare(Self::reset_items_query(&table))
                 .await
-                .context("reset_item_query")?,
+                .context("reset_items_query")?,
             st_update_item: session
                 .prepare(Self::update_item_query(&table))
                 .await
@@ -110,7 +126,7 @@ impl Db {
             SELECT {col_id}
             FROM {table}
             WHERE processed = TRUE
-            ALLOW FILTERING
+            LIMIT 1000
             "
         )
     }
@@ -131,7 +147,7 @@ impl Db {
             SELECT {col_id}, {col_emb}
             FROM {table}
             WHERE processed = FALSE
-            ALLOW FILTERING
+            LIMIT 1000
             "
         )
     }
@@ -146,18 +162,18 @@ impl Db {
             .map_ok(|(key, embeddings)| ((key as u64).into(), embeddings.into())))
     }
 
-    fn reset_item_query(table: &TableName) -> String {
+    fn reset_items_query(table: &TableName) -> String {
         format!(
             "
             UPDATE {table}
                 SET processed = False
-                WHERE id = ?
+                WHERE id IN ?
             "
         )
     }
-    async fn reset_item(&self, key: Key) -> anyhow::Result<()> {
+    async fn reset_items(&self, keys: &[Key]) -> anyhow::Result<()> {
         self.session
-            .execute_unpaged(&self.st_reset_item, (key,))
+            .execute_unpaged(&self.st_reset_items, (keys,))
             .await?;
         Ok(())
     }
@@ -179,29 +195,33 @@ impl Db {
     }
 }
 
-async fn reset_items(db: &Db) -> anyhow::Result<()> {
-    let mut rows = db.get_processed_ids().await?;
-    let mut processed = true;
-    while processed {
-        processed = false;
-        while let Some(key) = rows.try_next().await? {
-            processed = true;
-            db.reset_item(key).await?;
-        }
+async fn reset_items(db: &Arc<Db>) -> anyhow::Result<bool> {
+    let mut keys_chunks = db.get_processed_ids().await?.try_chunks(100);
+    let mut resetting = Vec::new();
+    while let Some(keys) = keys_chunks.try_next().await? {
+        let db = Arc::clone(db);
+        resetting.push(tokio::spawn(async move {
+            db.reset_items(&keys).await.map(|_| keys.len())
+        }));
     }
-    Ok(())
+    let mut count = 0;
+    for processed in resetting.into_iter() {
+        count += processed.await??;
+    }
+    debug!("processed new items: {count}");
+    Ok(count > 0)
 }
 
 async fn table_to_index(db: &Db, index: &Sender<Index>) -> anyhow::Result<()> {
     let mut rows = db.get_items().await?;
-    let mut processed = true;
-    while processed {
-        processed = false;
-        while let Some((key, embeddings)) = rows.try_next().await? {
-            processed = true;
-            index.add(key, embeddings).await;
-            db.update_item(key).await?;
-        }
+    while let Some((key, embeddings)) = rows.try_next().await? {
+        db.update_item(key).await?;
+        tokio::spawn({
+            let index = index.clone();
+            async move {
+                index.add(key, embeddings).await;
+            }
+        });
     }
     Ok(())
 }

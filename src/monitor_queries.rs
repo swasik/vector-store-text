@@ -16,6 +16,7 @@ use {
         prepared_statement::PreparedStatement, transport::errors::QueryError, Session,
         SessionBuilder,
     },
+    std::sync::Arc,
     tokio::{
         sync::mpsc::{self, Sender},
         time,
@@ -37,14 +38,14 @@ pub(crate) async fn new(
     uri: ScyllaDbUri,
     engine: Sender<Engine>,
 ) -> anyhow::Result<(Sender<MonitorQueries>, ActorHandle)> {
-    let db = Db::new(uri).await?;
+    let db = Arc::new(Db::new(uri).await?);
     let (tx, mut rx) = mpsc::channel(10);
     let task = tokio::spawn(async move {
         let mut interval = time::interval(time::Duration::from_nanos(1));
         while !rx.is_closed() {
             tokio::select! {
                 _ = interval.tick() => {
-                    process_queries(&db, &engine).await.unwrap_or_else(|err| {
+                    process_queries(Arc::clone(&db), &engine).await.unwrap_or_else(|err| {
                         warn!("monitor_queries::new: unable to process_queries: {err}")
                     });
                 }
@@ -90,7 +91,7 @@ impl Db {
     }
 
     const GET_QUERIES: &str = "
-        SELECT id, index_id, top_results_limit, embedding
+        SELECT id, vector_index_id, top_results_limit, embedding
             FROM vector_benchmark.vector_queries
             WHERE result_computed = FALSE
             ALLOW FILTERING
@@ -148,24 +149,27 @@ impl Db {
     }
 }
 
-async fn process_queries(db: &Db, engine: &Sender<Engine>) -> anyhow::Result<()> {
+async fn process_queries(db: Arc<Db>, engine: &Sender<Engine>) -> anyhow::Result<()> {
     let mut rows = db.get_queries().await?;
+    let mut tasks = Vec::new();
     while let Some((id, index_id, limit, embeddings)) = rows.try_next().await? {
-        let Some(idx) = engine.get_index(index_id).await else {
-            warn!("monitor_queries::process_queries: query {id} with unknown index {index_id}");
-            db.cancel_query(id).await?;
-            continue;
-        };
-        let (keys, distances) = match idx.ann(embeddings, limit).await {
-            Err(err) => {
-                warn!("monitor_queries::process_queries: unable to search ann: {err}");
-                db.cancel_query(id).await?;
-                continue;
+        tasks.push(tokio::spawn({
+            let db = Arc::clone(&db);
+            let engine = engine.clone();
+            async move {
+            if let Some(idx) = engine.get_index(index_id).await {
+                match idx.ann(embeddings, limit).await {
+                    Err(err) => {
+                        warn!("monitor_queries::process_queries: unable to search ann: {err}");
+                        db.cancel_query(id).await.unwrap_or_else(|err| warn!("monitor_queries::process_queries: unable to cancel query because of failed ann: {err}"));
+                    }
+                    Ok((keys, distances)) => db.answer_query(id, &keys, &distances).await.unwrap_or_else(|err| warn!("monitor_queries::process_queries: unable to answer query: {err}")),
+                }
+            } else {
+                warn!("monitor_queries::process_queries: query {id} with unknown index {index_id}");
+                db.cancel_query(id).await.unwrap_or_else(|err| warn!("monitor_queries::process_queries: unable to cancel query because of wrong index: {err}"));
             }
-            Ok(results) => results,
-        };
-
-        db.answer_query(id, &keys, &distances).await?;
+        }}));
     }
     Ok(())
 }
