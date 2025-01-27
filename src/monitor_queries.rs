@@ -21,7 +21,7 @@ use {
         sync::mpsc::{self, Sender},
         time,
     },
-    tracing::warn,
+    tracing::{debug, warn},
 };
 
 pub(crate) enum MonitorQueries {
@@ -152,7 +152,9 @@ impl Db {
 async fn process_queries(db: Arc<Db>, engine: &Sender<Engine>) -> anyhow::Result<()> {
     let mut rows = db.get_queries().await?;
     let mut tasks = Vec::new();
+    let mut count = 0;
     while let Some((id, index_id, limit, embeddings)) = rows.try_next().await? {
+        count += 1;
         tasks.push(tokio::spawn({
             let db = Arc::clone(&db);
             let engine = engine.clone();
@@ -170,6 +172,9 @@ async fn process_queries(db: Arc<Db>, engine: &Sender<Engine>) -> anyhow::Result
                 db.cancel_query(id).await.unwrap_or_else(|err| warn!("monitor_queries::process_queries: unable to cancel query because of wrong index: {err}"));
             }
         }}));
+    }
+    if count > 0 {
+        debug!("monitor_queries::process_queries: processed {count} queries");
     }
     Ok(())
 }

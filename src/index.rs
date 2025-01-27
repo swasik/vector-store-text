@@ -12,7 +12,7 @@ use {
     },
     anyhow::anyhow,
     std::sync::{
-        atomic::{AtomicU32, Ordering},
+        atomic::{AtomicU32, AtomicUsize, Ordering},
         Arc, RwLock,
     },
     tokio::{
@@ -20,7 +20,7 @@ use {
         time,
     },
     tracing::{debug, debug_span, error, info, warn, Instrument},
-    usearch::IndexOptions,
+    usearch::{IndexOptions, ScalarKind},
 };
 
 const RESERVE_INCREMENT: usize = 1000000;
@@ -88,28 +88,31 @@ pub(crate) fn new(
         dimensions: dimensions.0,
         connectivity: connectivity.0,
         expansion_add: expansion_add.0,
+        quantization: ScalarKind::F32,
         ..Default::default()
     };
     info!("Creating new index with id: {id}");
     let idx = Arc::new(usearch::Index::new(&options)?);
     idx.reserve(RESERVE_INCREMENT)?;
-    let (tx, mut rx) = mpsc::channel(10);
+    let (tx, mut rx) = mpsc::channel(100000);
     let task = tokio::spawn(async move {
         let mut items_count_db = IndexItemsCount(0);
         let items_count = Arc::new(AtomicU32::new(0));
         modify_actor.update_items_count(id, items_count_db).await;
         let mut housekeeping_interval = time::interval(time::Duration::from_secs(1));
         let idx_lock = Arc::new(RwLock::new(()));
+        let counter_add = Arc::new(AtomicUsize::new(0));
+        let counter_ann = Arc::new(AtomicUsize::new(0));
         while !rx.is_closed() {
             tokio::select! {
                 _ = housekeeping_interval.tick() => {
-                    housekeeping(&modify_actor, id, &mut items_count_db, &items_count).await;
+                    housekeeping(&modify_actor, id, &mut items_count_db, &items_count, &counter_add, &counter_ann, rx.len()).await;
                 }
 
                 Some(msg) = rx.recv() => {
                     match msg {
                         Index::Add { key, embeddings } => {
-                            add(Arc::clone(&idx), Arc::clone(&idx_lock), key, embeddings, Arc::clone(&items_count)).await;
+                            add(Arc::clone(&idx), Arc::clone(&idx_lock), key, embeddings, Arc::clone(&items_count), Arc::clone(&counter_add)).await;
                         }
 
                         Index::Ann {
@@ -117,7 +120,7 @@ pub(crate) fn new(
                             limit,
                             tx,
                         } => {
-                            ann(Arc::clone(&idx), tx, embeddings, dimensions, limit).await;
+                            ann(Arc::clone(&idx), tx, embeddings, dimensions, limit, Arc::clone(&counter_ann)).await;
                         }
 
                         Index::Stop => {
@@ -136,10 +139,20 @@ async fn housekeeping(
     id: IndexId,
     items_count_db: &mut IndexItemsCount,
     items_count: &Arc<AtomicU32>,
+    counter_add: &Arc<AtomicUsize>,
+    counter_ann: &Arc<AtomicUsize>,
+    channel_len: usize,
 ) {
+    {
+        let add = counter_add.load(Ordering::Relaxed);
+        let ann = counter_ann.load(Ordering::Relaxed);
+        if add != 0 || ann != 0 || channel_len != 0 {
+            debug!("housekeeping counters: add: {add}, ann: {ann}, channel len {channel_len}",);
+        }
+    }
     let items = items_count.load(Ordering::Relaxed);
     if items != items_count_db.0 {
-        debug!("housekeeping update items count: {items_count_db}");
+        debug!("housekeeping update items count: {items_count_db}",);
         items_count_db.0 = items;
         modify_actor.update_items_count(id, *items_count_db).await;
     }
@@ -151,22 +164,29 @@ async fn add(
     key: Key,
     embeddings: Embeddings,
     items_count: Arc<AtomicU32>,
+    counter: Arc<AtomicUsize>,
 ) {
     rayon::spawn(move || {
+        counter.fetch_add(1, Ordering::Relaxed);
         let capacity = idx.capacity();
         if capacity - idx.size() < RESERVE_THRESHOLD {
             let _lock = idx_lock.write().unwrap();
             let capacity = capacity + RESERVE_INCREMENT;
-            idx.reserve(capacity).unwrap_or_else(|err| {
+            if let Err(err) = idx.reserve(capacity) {
                 error!("index::add: unable to reserve index capacity for {capacity}: {err}");
-            });
+                counter.fetch_sub(1, Ordering::Relaxed);
+                return;
+            }
         }
 
         let _lock = idx_lock.read().unwrap();
-        idx.add(key.0, &embeddings.0).unwrap_or_else(|err| {
-            warn!("index::add: unable to add embeddings for key {key}: {err}")
-        });
+        if let Err(err) = idx.add(key.0, &embeddings.0) {
+            warn!("index::add: unable to add embeddings for key {key}: {err}");
+            counter.fetch_sub(1, Ordering::Relaxed);
+            return;
+        };
         items_count.fetch_add(1, Ordering::Relaxed);
+        counter.fetch_sub(1, Ordering::Relaxed);
     });
 }
 
@@ -176,6 +196,7 @@ async fn ann(
     embeddings: Embeddings,
     dimensions: Dimensions,
     limit: Limit,
+    counter: Arc<AtomicUsize>,
 ) {
     if embeddings.0.len() != dimensions.0 {
         tx.send(Err(anyhow!(
@@ -197,6 +218,7 @@ async fn ann(
     rayon::spawn({
         let idx = Arc::clone(&idx);
         move || {
+            counter.fetch_add(1, Ordering::Relaxed);
             tx.send(if let Ok(results) = idx.search(&embeddings.0, limit.0) {
                 Ok((
                     results.keys.into_iter().map(|key| key.into()).collect(),
@@ -210,6 +232,7 @@ async fn ann(
                 Err(anyhow!("index ann query: search failed"))
             })
             .unwrap_or_else(|_| warn!("index::new: Index::Ann: unable to send response"));
+            counter.fetch_sub(1, Ordering::Relaxed);
         }
     });
 }

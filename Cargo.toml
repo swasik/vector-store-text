@@ -21,4 +21,4 @@ tokio = { version = "*", features = ["full"] }
 tower-http = { version = "*", features = ["full"] }
 tracing = "*"
 tracing-subscriber = { version = "*", features = ["env-filter"] }
-usearch = "*"
+usearch = { git = "https://github.com/unum-cloud/usearch.git" }

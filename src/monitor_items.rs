@@ -85,7 +85,7 @@ struct Db {
     st_get_processed_ids: PreparedStatement,
     st_get_items: PreparedStatement,
     st_reset_items: PreparedStatement,
-    st_update_item: PreparedStatement,
+    st_update_items: PreparedStatement,
 }
 
 impl Db {
@@ -112,10 +112,10 @@ impl Db {
                 .prepare(Self::reset_items_query(&table))
                 .await
                 .context("reset_items_query")?,
-            st_update_item: session
-                .prepare(Self::update_item_query(&table))
+            st_update_items: session
+                .prepare(Self::update_items_query(&table))
                 .await
-                .context("update_item_query")?,
+                .context("update_items_query")?,
             session,
         })
     }
@@ -147,7 +147,6 @@ impl Db {
             SELECT {col_id}, {col_emb}
             FROM {table}
             WHERE processed = FALSE
-            LIMIT 1000
             "
         )
     }
@@ -178,18 +177,18 @@ impl Db {
         Ok(())
     }
 
-    fn update_item_query(table: &TableName) -> String {
+    fn update_items_query(table: &TableName) -> String {
         format!(
             "
             UPDATE {table}
                 SET processed = True
-                WHERE id = ?
+                WHERE id IN ?
             "
         )
     }
-    async fn update_item(&self, key: Key) -> anyhow::Result<()> {
+    async fn update_items(&self, keys: &[Key]) -> anyhow::Result<()> {
         self.session
-            .execute_unpaged(&self.st_update_item, (key,))
+            .execute_unpaged(&self.st_update_items, (keys,))
             .await?;
         Ok(())
     }
@@ -212,16 +211,51 @@ async fn reset_items(db: &Arc<Db>) -> anyhow::Result<bool> {
     Ok(count > 0)
 }
 
-async fn table_to_index(db: &Db, index: &Sender<Index>) -> anyhow::Result<()> {
+async fn table_to_index(db: &Arc<Db>, index: &Sender<Index>) -> anyhow::Result<()> {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
     let mut rows = db.get_items().await?;
+    let counter_before = Arc::new(AtomicUsize::new(0));
+    let counter_after = Arc::new(AtomicUsize::new(0));
+    let mut processed = Vec::new();
+    let mut count = 0;
     while let Some((key, embeddings)) = rows.try_next().await? {
-        db.update_item(key).await?;
+        counter_before.fetch_add(1, Ordering::Relaxed);
+        processed.push(key);
+        count += 1;
+        if processed.len() == 100 {
+            let processed: Vec<_> = processed.drain(..).collect();
+            let db = Arc::clone(&db);
+            tokio::spawn(async move {
+                db.update_items(&processed).await.unwrap_or_else(|err| {
+                    warn!("monitor_items::table_to_index: unable to update items: {err}")
+                });
+            });
+        }
         tokio::spawn({
             let index = index.clone();
+            let counter_after = Arc::clone(&counter_after);
             async move {
                 index.add(key, embeddings).await;
+                counter_after.fetch_add(1, Ordering::Relaxed);
             }
         });
+    }
+    if !processed.is_empty() {
+        db.update_items(&processed).await?;
+    }
+    {
+        let before = counter_before.load(Ordering::Relaxed);
+        let after = counter_after.load(Ordering::Relaxed);
+        if before != 0 || after != 0 {
+            debug!("table_to_index: before = {before}, after = {after}",);
+        }
+    }
+    if count > 0 {
+        debug!("table_to_index: processed {count} items",);
     }
     Ok(())
 }
