@@ -295,6 +295,17 @@ struct Connectivity(usize);
 struct ExpansionAdd(usize);
 
 #[derive(
+    Copy,
+    Clone,
+    Debug,
+    serde::Serialize,
+    serde::Deserialize,
+    derive_more::From,
+    derive_more::Display,
+)]
+struct ExpansionSearch(usize);
+
+#[derive(
     Copy, Clone, serde::Serialize, serde::Deserialize, derive_more::From, derive_more::Display,
 )]
 struct ParamM(usize);
@@ -308,7 +319,7 @@ struct Limit(usize);
 #[derive(derive_more::From)]
 struct HttpServerAddr(SocketAddr);
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     _ = dotenvy::dotenv();
     tracing_subscriber::registry()
@@ -327,11 +338,13 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or("127.0.0.1:9042".to_string())
         .into();
     let background_threads = dotenvy::var("SCYLLA_USEARCH_BACKGROUND_THREADS")
-        .unwrap_or("10".to_string())
-        .parse()?;
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(background_threads)
-        .build_global()?;
+        .ok()
+        .and_then(|v| v.parse().ok());
+    if let Some(background_threads) = background_threads {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(background_threads)
+            .build_global()?;
+    }
     let (supervisor_actor, supervisor_handle) = supervisor::new();
     let (engine_actor, engine_task) = engine::new(scylladb_uri, supervisor_actor.clone()).await?;
     supervisor_actor

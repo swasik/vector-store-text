@@ -45,23 +45,36 @@ pub(crate) async fn new(
     let task = tokio::spawn(async move {
         info!("resetting items");
         let mut state = State::Reset;
-        let mut interval = time::interval(time::Duration::from_nanos(1));
+        let mut interval = time::interval(time::Duration::from_secs(1));
         while !rx.is_closed() {
             tokio::select! {
                 _ = interval.tick() => {
                     match state {
-                        State::Reset => if !reset_items(&db)
-                            .await
-                            .unwrap_or_else(|err| {
-                                warn!("monitor_items: unable to reset items in table: {err}");
-                                false
-                            }) {
+                        State::Reset => {
+                            if !reset_items(&db)
+                                .await
+                                .unwrap_or_else(|err| {
+                                    warn!("monitor_items: unable to reset items in table: {err}");
+                                    false
+                                })
+                            {
                                 info!("copying items");
                                 state = State::Copy;
-                            },
-                        State::Copy => table_to_index(&db, &index).await.unwrap_or_else(|err| {
-                            warn!("monitor_items: unable to copy data from table to index: {err}")
-                        }),
+                            } else {
+                                interval.reset_immediately();
+                            }
+                        }
+                        State::Copy => {
+                            if table_to_index(&db, &index)
+                                .await
+                                .unwrap_or_else(|err| {
+                                    warn!("monitor_items: unable to copy data from table to index: {err}");
+                                    false
+                                })
+                            {
+                                interval.reset_immediately();
+                            }
+                        }
                     }
                 }
                 Some(msg) = rx.recv() => {
@@ -211,7 +224,7 @@ async fn reset_items(db: &Arc<Db>) -> anyhow::Result<bool> {
     Ok(count > 0)
 }
 
-async fn table_to_index(db: &Arc<Db>, index: &Sender<Index>) -> anyhow::Result<()> {
+async fn table_to_index(db: &Arc<Db>, index: &Sender<Index>) -> anyhow::Result<bool> {
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -257,5 +270,5 @@ async fn table_to_index(db: &Arc<Db>, index: &Sender<Index>) -> anyhow::Result<(
     if count > 0 {
         debug!("table_to_index: processed {count} items",);
     }
-    Ok(())
+    Ok(count > 0)
 }

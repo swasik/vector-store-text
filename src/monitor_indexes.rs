@@ -7,13 +7,16 @@ use {
     crate::{
         actor::{ActorHandle, MessageStop},
         engine::{Engine, EngineExt},
-        Connectivity, Dimensions, ExpansionAdd, IndexId, ScyllaDbUri,
+        Connectivity, Dimensions, ExpansionAdd, ExpansionSearch, IndexId, ScyllaDbUri,
     },
     anyhow::Context,
     itertools::Itertools,
     scylla::{prepared_statement::PreparedStatement, Session, SessionBuilder},
     std::collections::HashSet,
-    tokio::sync::mpsc::{self, Sender},
+    tokio::{
+        sync::mpsc::{self, Sender},
+        time,
+    },
     tracing::warn,
 };
 
@@ -35,31 +38,36 @@ pub(crate) async fn new(
     let mut known = HashSet::new();
     let (tx, mut rx) = mpsc::channel(10);
     let task = tokio::spawn(async move {
+        let mut interval = time::interval(time::Duration::from_secs(1));
         while !rx.is_closed() {
-            let indexes = db.not_cancelled_indexes().await.unwrap_or_else(|err| {
-                warn!("monitor_indexes: unable to get not cancelled indexes in db: {err}");
-                HashSet::new()
-            });
-            let cancelled = db.cancelled_indexes().await.unwrap_or_else(|err| {
-                warn!("monitor_indexes: unable to get cancelled indexes in db: {err}");
-                HashSet::new()
-            });
-            del_indexes(&engine, known.difference(&indexes).chain(cancelled.iter())).await;
-            add_indexes(
-                &db,
-                &engine,
-                indexes
-                    .difference(&known)
-                    .filter(|id| !cancelled.contains(id)),
-            )
-            .await;
-            known = indexes
-                .into_iter()
-                .filter(|id| !cancelled.contains(id))
-                .collect();
-            if !rx.is_empty() {
-                if let Some(MonitorIndexes::Stop) = rx.recv().await {
-                    rx.close();
+            tokio::select! {
+                _ = interval.tick() => {
+                    let indexes = db.not_cancelled_indexes().await.unwrap_or_else(|err| {
+                        warn!("monitor_indexes: unable to get not cancelled indexes in db: {err}");
+                        HashSet::new()
+                    });
+                    let cancelled = db.cancelled_indexes().await.unwrap_or_else(|err| {
+                        warn!("monitor_indexes: unable to get cancelled indexes in db: {err}");
+                        HashSet::new()
+                    });
+                    del_indexes(&engine, known.difference(&indexes).chain(cancelled.iter())).await;
+                    add_indexes(
+                        &db,
+                        &engine,
+                        indexes
+                            .difference(&known)
+                            .filter(|id| !cancelled.contains(id)),
+                    )
+                    .await;
+                    known = indexes
+                        .into_iter()
+                        .filter(|id| !cancelled.contains(id))
+                        .collect();
+                }
+                Some(msg) = rx.recv() => {
+                    match msg {
+                        MonitorIndexes::Stop => rx.close(),
+                    }
                 }
             }
         }
@@ -132,27 +140,35 @@ impl Db {
     }
 
     const GET_INDEX_PARAMS: &str =
-        "SELECT dimension, param_m, param_ef_construct FROM vector_benchmark.vector_indexes WHERE id = ?";
+        "SELECT dimension, param_m, param_ef_construct, param_ef_search FROM vector_benchmark.vector_indexes WHERE id = ?";
     async fn get_index_params(
         &self,
         id: IndexId,
-    ) -> anyhow::Result<Option<(Dimensions, Connectivity, ExpansionAdd)>> {
+    ) -> anyhow::Result<Option<(Dimensions, Connectivity, ExpansionAdd, ExpansionSearch)>> {
         Ok(self
             .session
             .execute_unpaged(&self.st_get_index_params, (id,))
             .await?
             .into_rows_result()?
-            .rows::<(i32, i32, i32)>()?
-            .filter_ok(|(dimensions, connectivity, expansion_add)| {
-                *dimensions > 0 && *connectivity >= 0 && *expansion_add >= 0
-            })
-            .map_ok(|(dimensions, connectivity, expansion_add)| {
-                (
-                    (dimensions as usize).into(),
-                    (connectivity as usize).into(),
-                    (expansion_add as usize).into(),
-                )
-            })
+            .rows::<(i32, i32, i32, i32)>()?
+            .filter_ok(
+                |(dimensions, connectivity, expansion_add, expansion_search)| {
+                    *dimensions > 0
+                        && *connectivity >= 0
+                        && *expansion_add >= 0
+                        && *expansion_search >= 0
+                },
+            )
+            .map_ok(
+                |(dimensions, connectivity, expansion_add, expansion_search)| {
+                    (
+                        (dimensions as usize).into(),
+                        (connectivity as usize).into(),
+                        (expansion_add as usize).into(),
+                        (expansion_search as usize).into(),
+                    )
+                },
+            )
             .next()
             .transpose()?)
     }
@@ -160,7 +176,7 @@ impl Db {
 
 async fn add_indexes(db: &Db, engine: &Sender<Engine>, ids: impl Iterator<Item = &IndexId>) {
     for id in ids {
-        let Ok(Some((dimensions, connectivity, expansion_add))) =
+        let Ok(Some((dimensions, connectivity, expansion_add, expansion_search))) =
             db.get_index_params(*id).await.inspect_err(|err| {
                 warn!("monitor_indexes::add_indexes: unable to get index params: {err}")
             })
@@ -176,6 +192,7 @@ async fn add_indexes(db: &Db, engine: &Sender<Engine>, ids: impl Iterator<Item =
                 dimensions,
                 connectivity,
                 expansion_add,
+                expansion_search,
             )
             .await;
     }

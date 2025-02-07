@@ -7,8 +7,8 @@ use {
     crate::{
         engine::{Engine, EngineExt},
         index::IndexExt,
-        ColumnName, Connectivity, Dimensions, Distance, Embeddings, ExpansionAdd, IndexId, Key,
-        Limit, TableName,
+        ColumnName, Connectivity, Dimensions, Distance, Embeddings, ExpansionAdd, ExpansionSearch,
+        IndexId, Key, Limit, TableName,
     },
     axum::{
         extract::{self, Path, State},
@@ -44,6 +44,7 @@ struct PutIndexPayload {
     dimensions: Dimensions,
     connectivity: Connectivity,
     expansion_add: ExpansionAdd,
+    expansion_search: ExpansionSearch,
 }
 
 async fn put_index(
@@ -60,6 +61,7 @@ async fn put_index(
             payload.dimensions,
             payload.connectivity,
             payload.expansion_add,
+            payload.expansion_search,
         )
         .await;
 }
@@ -81,8 +83,8 @@ fn default_limit() -> Limit {
 
 #[derive(serde::Serialize)]
 struct PostIndexAnnResponse {
-    key: Key,
-    distance: Distance,
+    keys: Vec<Key>,
+    distances: Vec<Distance>,
 }
 
 #[axum::debug_handler]
@@ -98,12 +100,7 @@ async fn post_index_ann(
         Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
         Ok((keys, distances)) => (
             StatusCode::OK,
-            response::Json(
-                keys.into_iter()
-                    .zip(distances.into_iter())
-                    .map(|(key, distance)| PostIndexAnnResponse { key, distance })
-                    .collect::<Vec<_>>(),
-            ),
+            response::Json(PostIndexAnnResponse { keys, distances }),
         )
             .into_response(),
     }

@@ -10,7 +10,8 @@ use {
         modify_indexes::{self, ModifyIndexesExt},
         monitor_indexes, monitor_items, monitor_queries,
         supervisor::{Supervisor, SupervisorExt},
-        ColumnName, Connectivity, Dimensions, ExpansionAdd, IndexId, ScyllaDbUri, TableName,
+        ColumnName, Connectivity, Dimensions, ExpansionAdd, ExpansionSearch, IndexId, ScyllaDbUri,
+        TableName,
     },
     std::{collections::HashMap, future::Future},
     tokio::sync::{mpsc, oneshot},
@@ -29,6 +30,7 @@ pub(crate) enum Engine {
         dimensions: Dimensions,
         connectivity: Connectivity,
         expansion_add: ExpansionAdd,
+        expansion_search: ExpansionSearch,
     },
     DelIndex {
         id: IndexId,
@@ -58,6 +60,7 @@ pub(crate) trait EngineExt {
         dimensions: Dimensions,
         connectivity: Connectivity,
         expansion_add: ExpansionAdd,
+        expansion_search: ExpansionSearch,
     );
     async fn del_index(&self, id: IndexId);
     fn get_index(&self, id: IndexId) -> impl Future<Output = Option<mpsc::Sender<Index>>> + Send;
@@ -82,6 +85,7 @@ impl EngineExt for mpsc::Sender<Engine> {
         dimensions: Dimensions,
         connectivity: Connectivity,
         expansion_add: ExpansionAdd,
+        expansion_search: ExpansionSearch,
     ) {
         self.send(Engine::AddIndex {
             id,
@@ -91,6 +95,7 @@ impl EngineExt for mpsc::Sender<Engine> {
             dimensions,
             connectivity,
             expansion_add,
+            expansion_search,
         })
         .await
         .unwrap_or_else(|err| warn!("EngineExt::add_index: unable to send request: {err}"));
@@ -144,6 +149,7 @@ pub(crate) async fn new(
                     dimensions,
                     connectivity,
                     expansion_add,
+                    expansion_search,
                 } => {
                     if indexes.contains_key(&id) {
                         continue;
@@ -154,6 +160,7 @@ pub(crate) async fn new(
                         dimensions,
                         connectivity,
                         expansion_add,
+                        expansion_search,
                     ) {
                         if let Ok((monitor_actor, monitor_task)) = monitor_items::new(
                             uri.clone(),

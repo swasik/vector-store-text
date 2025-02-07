@@ -7,8 +7,8 @@ use {
     crate::{
         actor::{ActorHandle, MessageStop},
         modify_indexes::{ModifyIndexes, ModifyIndexesExt},
-        Connectivity, Dimensions, Distance, Embeddings, ExpansionAdd, IndexId, IndexItemsCount,
-        Key, Limit,
+        Connectivity, Dimensions, Distance, Embeddings, ExpansionAdd, ExpansionSearch, IndexId,
+        IndexItemsCount, Key, Limit,
     },
     anyhow::anyhow,
     std::sync::{
@@ -83,11 +83,13 @@ pub(crate) fn new(
     dimensions: Dimensions,
     connectivity: Connectivity,
     expansion_add: ExpansionAdd,
+    expansion_search: ExpansionSearch,
 ) -> anyhow::Result<(mpsc::Sender<Index>, ActorHandle)> {
     let options = IndexOptions {
         dimensions: dimensions.0,
         connectivity: connectivity.0,
         expansion_add: expansion_add.0,
+        expansion_search: expansion_search.0,
         quantization: ScalarKind::F32,
         ..Default::default()
     };
@@ -172,11 +174,13 @@ async fn add(
         if capacity - idx.size() < RESERVE_THRESHOLD {
             let _lock = idx_lock.write().unwrap();
             let capacity = capacity + RESERVE_INCREMENT;
+            debug!("index::add: trying to reserve {capacity}");
             if let Err(err) = idx.reserve(capacity) {
                 error!("index::add: unable to reserve index capacity for {capacity}: {err}");
                 counter.fetch_sub(1, Ordering::Relaxed);
                 return;
             }
+            debug!("index::add: finished reserve {capacity}");
         }
 
         let _lock = idx_lock.read().unwrap();
