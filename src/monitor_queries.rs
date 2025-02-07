@@ -35,19 +35,21 @@ impl MessageStop for MonitorQueries {
 }
 
 pub(crate) async fn new(
-    uri: ScyllaDbUri,
-    engine: Sender<Engine>,
+    _uri: ScyllaDbUri,
+    _engine: Sender<Engine>,
 ) -> anyhow::Result<(Sender<MonitorQueries>, ActorHandle)> {
-    let db = Arc::new(Db::new(uri).await?);
+    //let db = Arc::new(Db::new(uri).await?);
     let (tx, mut rx) = mpsc::channel(10);
     let task = tokio::spawn(async move {
-        let mut interval = time::interval(time::Duration::from_nanos(1));
+        let mut interval = time::interval(time::Duration::from_secs(10));
         while !rx.is_closed() {
             tokio::select! {
                 _ = interval.tick() => {
+                    /*
                     process_queries(Arc::clone(&db), &engine).await.unwrap_or_else(|err| {
                         warn!("monitor_queries::new: unable to process_queries: {err}")
                     });
+                    */
                 }
                 Some(msg) = rx.recv() => {
                     match msg {
