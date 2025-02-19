@@ -11,7 +11,10 @@ use {
     },
     anyhow::Context,
     itertools::Itertools,
-    scylla::{prepared_statement::PreparedStatement, Session, SessionBuilder},
+    scylla::{
+        client::{session::Session, session_builder::SessionBuilder},
+        prepared_statement::PreparedStatement,
+    },
     std::collections::HashSet,
     tokio::{
         sync::mpsc::{self, Sender},

@@ -14,7 +14,8 @@ dotenvy = "*"
 futures = "*"
 itertools = "*"
 rayon = "*"
-scylla = "*"
+#scylla = "*"
+scylla = { git = "https://github.com/smoczy123/scylla-rust-driver.git", branch = "vector-type" }
 scylla-cdc = { git = "https://github.com/abastian/scylla-cdc-rust.git", branch = "feature/scylla-0.15.1" }
 serde = { version = "*", features = ["derive"] }
 tokio = { version = "*", features = ["full"] }

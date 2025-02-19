@@ -13,8 +13,9 @@ use {
     anyhow::Context,
     futures::{Stream, TryStreamExt},
     scylla::{
-        prepared_statement::PreparedStatement, transport::errors::QueryError, Session,
-        SessionBuilder,
+        client::{session::Session, session_builder::SessionBuilder},
+        errors::QueryError,
+        prepared_statement::PreparedStatement,
     },
     std::sync::Arc,
     tokio::{

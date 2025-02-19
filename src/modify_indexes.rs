@@ -9,7 +9,10 @@ use {
         IndexId, IndexItemsCount, ScyllaDbUri,
     },
     anyhow::Context,
-    scylla::{prepared_statement::PreparedStatement, Session, SessionBuilder},
+    scylla::{
+        client::{session::Session, session_builder::SessionBuilder},
+        prepared_statement::PreparedStatement,
+    },
     tokio::sync::mpsc::{self, Sender},
     tracing::warn,
 };
