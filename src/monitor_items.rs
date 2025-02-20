@@ -16,7 +16,7 @@ use {
         errors::QueryError,
         prepared_statement::PreparedStatement,
     },
-    std::sync::Arc,
+    std::{mem, sync::Arc},
     tokio::{
         sync::mpsc::{self, Sender},
         time,
@@ -241,8 +241,8 @@ async fn table_to_index(db: &Arc<Db>, index: &Sender<Index>) -> anyhow::Result<b
         processed.push(key);
         count += 1;
         if processed.len() == 100 {
-            let processed: Vec<_> = processed.drain(..).collect();
-            let db = Arc::clone(&db);
+            let processed: Vec<_> = mem::take(&mut processed);
+            let db = Arc::clone(db);
             tokio::spawn(async move {
                 db.update_items(&processed).await.unwrap_or_else(|err| {
                     warn!("monitor_items::table_to_index: unable to update items: {err}")
