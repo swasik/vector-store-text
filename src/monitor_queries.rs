@@ -107,7 +107,7 @@ impl Db {
             .session
             .execute_iter(self.st_get_queries.clone(), ())
             .await?
-            .rows_stream::<(i32, i32, i32, Vec<f32>)>()?
+            .rows_stream::<(i32, String, i32, Vec<f32>)>()?
             .map_ok(|(id, index_id, limit, embeddings)| {
                 (
                     id.into(),
@@ -162,7 +162,7 @@ async fn process_queries(db: Arc<Db>, engine: &Sender<Engine>) -> anyhow::Result
             let db = Arc::clone(&db);
             let engine = engine.clone();
             async move {
-            if let Some(idx) = engine.get_index(index_id).await {
+            if let Some(idx) = engine.get_index(index_id.clone()).await {
                 match idx.ann(embeddings, limit).await {
                     Err(err) => {
                         warn!("monitor_queries::process_queries: unable to search ann: {err}");

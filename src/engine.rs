@@ -11,7 +11,6 @@ use {
         monitor_indexes, monitor_items, monitor_queries,
         supervisor::{Supervisor, SupervisorExt},
         ColumnName, Connectivity, Dimensions, ExpansionAdd, ExpansionSearch, IndexId, ScyllaDbUri,
-        TableName,
     },
     std::{collections::HashMap, future::Future},
     tokio::sync::{mpsc, oneshot},
@@ -24,7 +23,6 @@ pub(crate) enum Engine {
     },
     AddIndex {
         id: IndexId,
-        table: TableName,
         col_id: ColumnName,
         col_emb: ColumnName,
         dimensions: Dimensions,
@@ -54,7 +52,6 @@ pub(crate) trait EngineExt {
     async fn add_index(
         &self,
         id: IndexId,
-        table: TableName,
         col_id: ColumnName,
         col_emb: ColumnName,
         dimensions: Dimensions,
@@ -79,7 +76,6 @@ impl EngineExt for mpsc::Sender<Engine> {
     async fn add_index(
         &self,
         id: IndexId,
-        table: TableName,
         col_id: ColumnName,
         col_emb: ColumnName,
         dimensions: Dimensions,
@@ -89,7 +85,6 @@ impl EngineExt for mpsc::Sender<Engine> {
     ) {
         self.send(Engine::AddIndex {
             id,
-            table,
             col_id,
             col_emb,
             dimensions,
@@ -143,7 +138,6 @@ pub(crate) async fn new(
                 }
                 Engine::AddIndex {
                     id,
-                    table,
                     col_id,
                     col_emb,
                     dimensions,
@@ -155,7 +149,7 @@ pub(crate) async fn new(
                         continue;
                     }
                     if let Ok((index_actor, index_task)) = index::new(
-                        id,
+                        id.clone(),
                         modify_actor.clone(),
                         dimensions,
                         connectivity,
@@ -164,12 +158,12 @@ pub(crate) async fn new(
                     ) {
                         if let Ok((monitor_actor, monitor_task)) = monitor_items::new(
                             uri.clone(),
-                            table.clone(),
+                            id.clone().0.into(),
                             col_id.clone(),
                             col_emb.clone(),
                             index_actor.clone(),
                         )
-                        .await.inspect_err(|err| error!("unable to create monitor items with uri {uri}, table {table}, col_id {col_id}, col_emb {col_emb}: {err}"))
+                        .await.inspect_err(|err| error!("unable to create monitor items with uri {uri}, table {id}, col_id {col_id}, col_emb {col_emb}: {err}"))
                         {
                             supervisor_actor
                                 .attach(index_actor.clone(), index_task)
@@ -177,7 +171,7 @@ pub(crate) async fn new(
                             supervisor_actor
                                 .attach(monitor_actor.clone(), monitor_task)
                                 .await;
-                            indexes.insert(id, index_actor);
+                            indexes.insert(id.clone(), index_actor);
                             monitors.insert(id, monitor_actor);
                         } else {
                             index_actor.actor_stop().await;

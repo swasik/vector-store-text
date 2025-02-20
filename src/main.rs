@@ -34,7 +34,6 @@ use {
 pub(crate) struct ScyllaDbUri(String);
 
 #[derive(
-    Copy,
     Clone,
     Hash,
     Eq,
@@ -44,8 +43,11 @@ pub(crate) struct ScyllaDbUri(String);
     serde::Deserialize,
     derive_more::From,
     derive_more::Display,
+    utoipa::ToSchema,
 )]
-struct IndexId(i32);
+/// DB's absolute index/table name (with keyspace) for which index should be build
+#[schema(example = "vector_benchmark.vector_items")]
+struct IndexId(String);
 
 impl SerializeValue for IndexId {
     fn serialize<'b>(
@@ -62,20 +64,18 @@ impl SerializeValue for IndexId {
         };
 
         match typ {
-            ColumnType::Int => writer
-                .set_value(self.0.to_be_bytes().as_slice())
-                .map_err(|_| {
-                    SerializationError::new(BuiltinSerializationError {
-                        rust_name: any::type_name::<Self>(),
-                        got: typ.clone().into_owned(),
-                        kind: BuiltinSerializationErrorKind::ValueOverflow,
-                    })
-                }),
+            ColumnType::Text => writer.set_value(self.0.as_bytes()).map_err(|_| {
+                SerializationError::new(BuiltinSerializationError {
+                    rust_name: any::type_name::<Self>(),
+                    got: typ.clone().into_owned(),
+                    kind: BuiltinSerializationErrorKind::ValueOverflow,
+                })
+            }),
             _ => Err(SerializationError::new(BuiltinTypeCheckError {
                 rust_name: any::type_name::<Self>(),
                 got: typ.clone().into_owned(),
                 kind: BuiltinTypeCheckErrorKind::MismatchedType {
-                    expected: &[ColumnType::Int],
+                    expected: &[ColumnType::Text],
                 },
             })),
         }
@@ -131,10 +131,25 @@ impl SerializeValue for QueryId {
     }
 }
 
-#[derive(Clone, derive_more::From, serde::Serialize, serde::Deserialize, derive_more::Display)]
+#[derive(
+    Clone,
+    derive_more::From,
+    serde::Serialize,
+    serde::Deserialize,
+    derive_more::Display,
+    utoipa::ToSchema,
+)]
 struct TableName(String);
 
-#[derive(Clone, derive_more::From, serde::Serialize, serde::Deserialize, derive_more::Display)]
+#[derive(
+    Clone,
+    derive_more::From,
+    serde::Serialize,
+    serde::Deserialize,
+    derive_more::Display,
+    utoipa::ToSchema,
+)]
+/// Name of the column in a db table
 struct ColumnName(String);
 
 #[derive(
@@ -145,7 +160,9 @@ struct ColumnName(String);
     serde::Deserialize,
     derive_more::From,
     derive_more::Display,
+    utoipa::ToSchema,
 )]
+/// Key for index embeddings
 struct Key(u64);
 
 impl SerializeValue for Key {
@@ -183,7 +200,10 @@ impl SerializeValue for Key {
     }
 }
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, derive_more::From)]
+#[derive(
+    Clone, Debug, serde::Serialize, serde::Deserialize, derive_more::From, utoipa::ToSchema,
+)]
+/// Distance beetwen embeddings
 struct Distance(f32);
 
 impl SerializeValue for Distance {
@@ -269,7 +289,9 @@ impl SerializeValue for IndexItemsCount {
     serde::Deserialize,
     derive_more::From,
     derive_more::Display,
+    utoipa::ToSchema,
 )]
+/// Dimensions of embeddings
 struct Dimensions(usize);
 
 #[derive(
@@ -280,7 +302,9 @@ struct Dimensions(usize);
     serde::Deserialize,
     derive_more::From,
     derive_more::Display,
+    utoipa::ToSchema,
 )]
+/// Limit number of neighbors per graph node
 struct Connectivity(usize);
 
 #[derive(
@@ -291,7 +315,9 @@ struct Connectivity(usize);
     serde::Deserialize,
     derive_more::From,
     derive_more::Display,
+    utoipa::ToSchema,
 )]
+/// Control the recall of indexing
 struct ExpansionAdd(usize);
 
 #[derive(
@@ -302,7 +328,9 @@ struct ExpansionAdd(usize);
     serde::Deserialize,
     derive_more::From,
     derive_more::Display,
+    utoipa::ToSchema,
 )]
+/// Control the quality of the search
 struct ExpansionSearch(usize);
 
 #[derive(
@@ -310,10 +338,21 @@ struct ExpansionSearch(usize);
 )]
 struct ParamM(usize);
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, derive_more::From)]
+#[derive(
+    Clone, Debug, serde::Serialize, serde::Deserialize, derive_more::From, utoipa::ToSchema,
+)]
+/// Embeddings vector
 struct Embeddings(Vec<f32>);
 
-#[derive(Clone, serde::Serialize, serde::Deserialize, derive_more::Display, derive_more::From)]
+#[derive(
+    Clone,
+    serde::Serialize,
+    serde::Deserialize,
+    derive_more::Display,
+    derive_more::From,
+    utoipa::ToSchema,
+)]
+/// Limit the number of search result
 struct Limit(usize);
 
 #[derive(derive_more::From)]

@@ -23,3 +23,6 @@ tower-http = { version = "*", features = ["full"] }
 tracing = "*"
 tracing-subscriber = { version = "*", features = ["env-filter"] }
 usearch = { git = "https://github.com/unum-cloud/usearch.git" }
+utoipa = { version = "*", features = ["axum_extras"] }
+utoipa-axum = "*"
+utoipa-swagger-ui = { version = "*", features = ["axum"] }

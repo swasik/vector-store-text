@@ -120,7 +120,7 @@ impl Db {
             .execute_unpaged(&self.st_not_cancelled_indexes, &[])
             .await?
             .into_rows_result()?
-            .rows::<(i32,)>()?
+            .rows::<(String,)>()?
             .map_ok(|(id,)| id.into())
             .try_collect()?)
     }
@@ -137,7 +137,7 @@ impl Db {
             .execute_unpaged(&self.st_cancelled_indexes, &[])
             .await?
             .into_rows_result()?
-            .rows::<(i32,)>()?
+            .rows::<(String,)>()?
             .map_ok(|(id,)| id.into())
             .try_collect()?)
     }
@@ -180,7 +180,7 @@ impl Db {
 async fn add_indexes(db: &Db, engine: &Sender<Engine>, ids: impl Iterator<Item = &IndexId>) {
     for id in ids {
         let Ok(Some((dimensions, connectivity, expansion_add, expansion_search))) =
-            db.get_index_params(*id).await.inspect_err(|err| {
+            db.get_index_params(id.clone()).await.inspect_err(|err| {
                 warn!("monitor_indexes::add_indexes: unable to get index params: {err}")
             })
         else {
@@ -188,8 +188,7 @@ async fn add_indexes(db: &Db, engine: &Sender<Engine>, ids: impl Iterator<Item =
         };
         engine
             .add_index(
-                *id,
-                "vector_benchmark.vector_items".to_string().into(),
+                id.clone(),
                 "id".to_string().into(),
                 "embedding".to_string().into(),
                 dimensions,
@@ -203,6 +202,6 @@ async fn add_indexes(db: &Db, engine: &Sender<Engine>, ids: impl Iterator<Item =
 
 async fn del_indexes(engine: &Sender<Engine>, ids: impl Iterator<Item = &IndexId>) {
     for id in ids {
-        engine.del_index(*id).await;
+        engine.del_index(id.clone()).await;
     }
 }

@@ -97,42 +97,72 @@ pub(crate) fn new(
     let idx = Arc::new(usearch::Index::new(&options)?);
     idx.reserve(RESERVE_INCREMENT)?;
     let (tx, mut rx) = mpsc::channel(100000);
-    let task = tokio::spawn(async move {
-        let mut items_count_db = IndexItemsCount(0);
-        let items_count = Arc::new(AtomicU32::new(0));
-        modify_actor.update_items_count(id, items_count_db).await;
-        let mut housekeeping_interval = time::interval(time::Duration::from_secs(1));
-        let idx_lock = Arc::new(RwLock::new(()));
-        let counter_add = Arc::new(AtomicUsize::new(0));
-        let counter_ann = Arc::new(AtomicUsize::new(0));
-        while !rx.is_closed() {
-            tokio::select! {
-                _ = housekeeping_interval.tick() => {
-                    housekeeping(&modify_actor, id, &mut items_count_db, &items_count, &counter_add, &counter_ann, rx.len()).await;
-                }
-
-                Some(msg) = rx.recv() => {
-                    match msg {
-                        Index::Add { key, embeddings } => {
-                            add(Arc::clone(&idx), Arc::clone(&idx_lock), key, embeddings, Arc::clone(&items_count), Arc::clone(&counter_add)).await;
+    let task = tokio::spawn(
+        {
+            let id = id.clone();
+            async move {
+                let mut items_count_db = IndexItemsCount(0);
+                let items_count = Arc::new(AtomicU32::new(0));
+                modify_actor
+                    .update_items_count(id.clone(), items_count_db)
+                    .await;
+                let mut housekeeping_interval = time::interval(time::Duration::from_secs(1));
+                let idx_lock = Arc::new(RwLock::new(()));
+                let counter_add = Arc::new(AtomicUsize::new(0));
+                let counter_ann = Arc::new(AtomicUsize::new(0));
+                while !rx.is_closed() {
+                    tokio::select! {
+                        _ = housekeeping_interval.tick() => {
+                            housekeeping(
+                                &modify_actor,
+                                id.clone(),
+                                &mut items_count_db,
+                                &items_count,
+                                &counter_add,
+                                &counter_ann,
+                                rx.len()
+                            ).await;
                         }
 
-                        Index::Ann {
-                            embeddings,
-                            limit,
-                            tx,
-                        } => {
-                            ann(Arc::clone(&idx), tx, embeddings, dimensions, limit, Arc::clone(&counter_ann)).await;
-                        }
+                        Some(msg) = rx.recv() => {
+                            match msg {
+                                Index::Add { key, embeddings } => {
+                                    add(
+                                        Arc::clone(&idx),
+                                        Arc::clone(&idx_lock),
+                                        key,
+                                        embeddings,
+                                        Arc::clone(&items_count),
+                                        Arc::clone(&counter_add)
+                                    ).await;
+                                }
 
-                        Index::Stop => {
-                            rx.close();
+                                Index::Ann {
+                                    embeddings,
+                                    limit,
+                                    tx,
+                                } => {
+                                    ann(
+                                        Arc::clone(&idx),
+                                        tx,
+                                        embeddings,
+                                        dimensions,
+                                        limit,
+                                        Arc::clone(&counter_ann)
+                                    ).await;
+                                }
+
+                                Index::Stop => {
+                                    rx.close();
+                                }
+                            }
                         }
                     }
                 }
             }
         }
-    }.instrument(debug_span!("index", "{}", id.0)));
+        .instrument(debug_span!("index", "{}", id.0)),
+    );
     Ok((tx, task))
 }
 
