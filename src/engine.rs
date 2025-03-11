@@ -1,6 +1,6 @@
 /*
  * Copyright 2025-present ScyllaDB
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: Proprietary
  */
 
 use {
