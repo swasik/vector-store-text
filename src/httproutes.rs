@@ -27,9 +27,10 @@ use {
 #[derive(OpenApi)]
 #[openapi(
     tags(
-        (name = "scylla-vsearch", description = "Scylla Vector Search Service")
+        (name = "scylla-vector-store", description = "Scylla Vector Store (API will change after design)")
     )
 )]
+// TODO: modify HTTP API after design
 struct ApiDoc;
 
 pub(crate) fn new(engine: Sender<Engine>) -> Router {

@@ -1,2 +1,3 @@
-# scylla-usearch
-USearch vector search service for ScyllaDB
+# Scylla Vector Store
+
+This is an indexing service for ScyllaDB for vector searching functionality.
