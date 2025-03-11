@@ -8,7 +8,7 @@ use {
         actor::{ActorHandle, ActorStop, MessageStop},
         index::{self, Index},
         modify_indexes::{self, ModifyIndexesExt},
-        monitor_indexes, monitor_items, monitor_queries,
+        monitor_indexes, monitor_items,
         supervisor::{Supervisor, SupervisorExt},
         ColumnName, Connectivity, Dimensions, ExpansionAdd, ExpansionSearch, IndexId, ScyllaDbUri,
     },
@@ -123,8 +123,6 @@ pub(crate) async fn new(
     supervisor_actor
         .attach(modify_actor.clone(), modify_task)
         .await;
-    let (monitor_actor, monitor_task) = monitor_queries::new(uri.clone(), tx.clone()).await?;
-    supervisor_actor.attach(monitor_actor, monitor_task).await;
     let task = tokio::spawn(async move {
         let mut indexes = HashMap::new();
         let mut monitors = HashMap::new();

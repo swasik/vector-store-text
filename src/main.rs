@@ -11,7 +11,6 @@ mod index;
 mod modify_indexes;
 mod monitor_indexes;
 mod monitor_items;
-mod monitor_queries;
 mod supervisor;
 
 use {
@@ -76,55 +75,6 @@ impl SerializeValue for IndexId {
                 got: typ.clone().into_owned(),
                 kind: BuiltinTypeCheckErrorKind::MismatchedType {
                     expected: &[ColumnType::Text],
-                },
-            })),
-        }
-    }
-}
-
-#[derive(
-    Copy,
-    Clone,
-    Hash,
-    Eq,
-    PartialEq,
-    Debug,
-    serde::Serialize,
-    serde::Deserialize,
-    derive_more::From,
-    derive_more::Display,
-)]
-struct QueryId(i32);
-
-impl SerializeValue for QueryId {
-    fn serialize<'b>(
-        &self,
-        typ: &ColumnType,
-        writer: CellWriter<'b>,
-    ) -> Result<WrittenCellProof<'b>, SerializationError> {
-        use {
-            scylla::serialize::value::{
-                BuiltinSerializationError, BuiltinSerializationErrorKind, BuiltinTypeCheckError,
-                BuiltinTypeCheckErrorKind,
-            },
-            std::any,
-        };
-
-        match typ {
-            ColumnType::Int => writer
-                .set_value(self.0.to_be_bytes().as_slice())
-                .map_err(|_| {
-                    SerializationError::new(BuiltinSerializationError {
-                        rust_name: any::type_name::<Self>(),
-                        got: typ.clone().into_owned(),
-                        kind: BuiltinSerializationErrorKind::ValueOverflow,
-                    })
-                }),
-            _ => Err(SerializationError::new(BuiltinTypeCheckError {
-                rust_name: any::type_name::<Self>(),
-                got: typ.clone().into_owned(),
-                kind: BuiltinTypeCheckErrorKind::MismatchedType {
-                    expected: &[ColumnType::Int],
                 },
             })),
         }
