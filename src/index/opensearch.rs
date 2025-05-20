@@ -54,57 +54,20 @@ pub fn new_opensearch(addr: &str) -> Result<OpenSearchIndexFactory, anyhow::Erro
 async fn create_index(
     id: &IndexId,
     client: Arc<OpenSearch>,
-) -> Result<opensearch::http::response::Response, ()> {
-    /*
-    let response: Result<opensearch::http::response::Response, ()> = client
+) -> anyhow::Result<()> {
+    _ = client
         .indices()
-        .create(IndicesCreateParts::Index(&id.0))
+        .create(opensearch::indices::IndicesCreateParts::Index(&id.0))
         .body(json!({
-            "settings": {
-                "index.knn": true
-            },
             "mappings": {
                 "properties": {
-                    "vector": {
-                        "type": "knn_vector",
-                        "dimension": dimensions.0.get(),
-                        "method": {
-                            "name": "hnsw",
-                            "parameters": {
-                                "ef_search": if expansion_search.0 > 0 {
-                                    expansion_search.0
-                                } else {
-                                    100
-                                },
-                                "ef_construction": if expansion_add.0 > 0 {
-                                    expansion_add.0
-                                } else {
-                                    100
-                                },
-                                "m": if connectivity.0 > 0 {
-                                    connectivity.0
-                                } else {
-                                    16
-                                },
-                            }
-                        }
-                    },
+                    "article_content": { "type" : "text" }
                 }
             }
         }))
         .send()
-        .await
-        .map_or_else(
-            Err,
-            opensearch::http::response::Response::error_for_status_code,
-        )
-        .map_err(|err| {
-            error!("engine::new: unable to create index with id {id}: {err}");
-        });
-
-    response
-    */
-    todo!()
+        .await?;
+    Ok(())
 }
 
 pub fn new(id: IndexId, client: Arc<OpenSearch>) -> anyhow::Result<mpsc::Sender<Index>> {
