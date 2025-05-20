@@ -114,9 +114,9 @@ pub fn new(id: IndexId, client: Arc<OpenSearch>) -> anyhow::Result<mpsc::Sender<
 async fn process(msg: Index, id: Arc<IndexId>, client: Arc<OpenSearch>) {
     // TODO: Implement the logic for processing the messages
     match msg {
-        Index::Add { key, text } => add(id, key, text, client).await,
-        Index::Remove { key } => {
-            let _ = key;
+        Index::Add { article_id, article_content } => add(id, article_id, article_content, client).await,
+        Index::Remove { article_id } => {
+            let _ = article_id;
         }
         Index::Search { text, limit, tx } => {
             let _ = text;
@@ -126,12 +126,11 @@ async fn process(msg: Index, id: Arc<IndexId>, client: Arc<OpenSearch>) {
     }
 }
 
-async fn add(id: Arc<IndexId>, key: Key, text: String, client: Arc<OpenSearch>) {
-    /*
+async fn add(id: Arc<IndexId>, article_id: Key, article_content: String, client: Arc<OpenSearch>) {
     let response = client
-        .index(IndexParts::IndexId(&id.0, &key.0.to_string()))
+        .index(IndexParts::IndexId(&id.0, &article_id.0.to_string()))
         .body(json!({
-            "vector": text,
+            "article_content": article_content,
         }))
         .send()
         .await
@@ -140,7 +139,6 @@ async fn add(id: Arc<IndexId>, key: Key, text: String, client: Arc<OpenSearch>) 
             opensearch::http::response::Response::error_for_status_code,
         )
         .map_err(|err| {
-            error!("add: unable to add text for a key {key}: {err}");
+            error!("add: unable to add text for a key {article_id}: {err}");
         });
-    */
 }

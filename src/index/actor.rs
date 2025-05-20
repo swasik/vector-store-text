@@ -12,11 +12,11 @@ pub(crate) type SearchR = anyhow::Result<Vec<Key>>;
 
 pub enum Index {
     Add {
-        key: Key,
-        text: String,
+        article_id: Key,
+        article_content: String,
     },
     Remove {
-        key: Key,
+        article_id: Key,
     },
     Search {
         text: String,
@@ -26,20 +26,20 @@ pub enum Index {
 }
 
 pub(crate) trait IndexExt {
-    async fn add(&self, key: Key, text: String);
-    async fn remove(&self, key: Key);
+    async fn add(&self, article_id: Key, article_content: String);
+    async fn remove(&self, article_id: Key);
     async fn search(&self, text: String, limit: Limit) -> SearchR;
 }
 
 impl IndexExt for mpsc::Sender<Index> {
-    async fn add(&self, key: Key, text: String) {
-        self.send(Index::Add { key, text })
+    async fn add(&self, article_id: Key, article_content: String) {
+        self.send(Index::Add { article_id, article_content })
             .await
             .expect("internal actor should receive request");
     }
 
-    async fn remove(&self, key: Key) {
-        self.send(Index::Remove { key })
+    async fn remove(&self, article_id: Key) {
+        self.send(Index::Remove { article_id })
             .await
             .expect("internal actor should receive request");
     }
