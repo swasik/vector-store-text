@@ -38,6 +38,7 @@ pub(crate) fn new(engine: Sender<Engine>) -> Router {
         .merge(
             OpenApiRouter::new()
                 .routes(routes!(get_indexes))
+                .routes(routes!(put_index))
                 .routes(routes!(post_index_search))
                 .layer(TraceLayer::new_for_http())
                 .with_state(engine),
@@ -59,6 +60,21 @@ async fn get_indexes(State(engine): State<Sender<Engine>>) -> response::Json<Vec
     response::Json(engine.get_index_ids().await)
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/v1/text-search/{index}",
+    description = "Create an index",
+    params(
+        ("index" = IndexId, Path, description = "Index to search")
+    ),
+    responses(
+        (status = 200, description = "An Index created"),
+    )
+)]
+async fn put_index(State(engine): State<Sender<Engine>>, Path(id): Path<IndexId>) {
+    engine.add_index(id).await;
+}
+
 #[derive(serde::Deserialize, serde::Serialize, utoipa::ToSchema)]
 pub struct PostIndexSearchRequest {
     pub text: String,
@@ -75,7 +91,7 @@ pub struct PostIndexSearchRequest {
     ),
     request_body = PostIndexSearchRequest,
     responses(
-        (status = 200, description = "Ann search result", body = Vec<String>),
+        (status = 200, description = "Search result", body = Vec<String>),
         (status = 404, description = "Index not found")
     )
 )]
