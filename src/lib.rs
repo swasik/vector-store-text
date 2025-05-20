@@ -37,6 +37,7 @@ pub struct ScyllaDbUri(String);
     Debug,
     serde::Deserialize,
     serde::Serialize,
+    derive_more::From,
     derive_more::Display,
     derive_more::AsRef,
     utoipa::ToSchema,

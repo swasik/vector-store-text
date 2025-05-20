@@ -51,10 +51,7 @@ pub fn new_opensearch(addr: &str) -> Result<OpenSearchIndexFactory, anyhow::Erro
     })
 }
 
-async fn create_index(
-    id: &IndexId,
-    client: Arc<OpenSearch>,
-) -> anyhow::Result<()> {
+async fn create_index(id: &IndexId, client: Arc<OpenSearch>) -> anyhow::Result<()> {
     _ = client
         .indices()
         .create(opensearch::indices::IndicesCreateParts::Index(&id.0))
@@ -79,10 +76,8 @@ pub fn new(id: IndexId, client: Arc<OpenSearch>) -> anyhow::Result<mpsc::Sender<
     tokio::spawn({
         let cloned_id = id.clone();
         async move {
-            let response = create_index(&id, client.clone()).await;
-
-            if response.is_err() {
-                error!("engine::new: unable to create index with id {id}");
+            if let Err(err) = create_index(&id, client.clone()).await {
+                error!("engine::new: unable to create index with id {id}: {err}");
                 return;
             }
 
@@ -126,12 +121,13 @@ async fn process(msg: Index, id: Arc<IndexId>, client: Arc<OpenSearch>) {
         Index::Search { text, limit, tx } => {
             let _ = text;
             let _ = limit;
-            let _ = tx;
+            _ = tx.send(Ok(vec![]));
         }
     }
 }
 
 async fn add(id: Arc<IndexId>, key: Key, text: String, client: Arc<OpenSearch>) {
+    /*
     let response = client
         .index(IndexParts::IndexId(&id.0, &key.0.to_string()))
         .body(json!({
@@ -144,6 +140,7 @@ async fn add(id: Arc<IndexId>, key: Key, text: String, client: Arc<OpenSearch>) 
             opensearch::http::response::Response::error_for_status_code,
         )
         .map_err(|err| {
-            error!("add_or_replace: unable to add embedding for key {key}: {err}");
+            error!("add: unable to add text for a key {key}: {err}");
         });
+    */
 }

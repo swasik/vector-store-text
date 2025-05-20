@@ -4,6 +4,7 @@
  */
 
 use crate::IndexId;
+use crate::Key;
 use crate::Limit;
 use crate::engine::Engine;
 use crate::engine::EngineExt;
@@ -39,6 +40,7 @@ pub(crate) fn new(engine: Sender<Engine>) -> Router {
             OpenApiRouter::new()
                 .routes(routes!(get_indexes))
                 .routes(routes!(put_index))
+                .routes(routes!(post_index_add))
                 .routes(routes!(post_index_search))
                 .layer(TraceLayer::new_for_http())
                 .with_state(engine),
@@ -72,7 +74,39 @@ async fn get_indexes(State(engine): State<Sender<Engine>>) -> response::Json<Vec
     )
 )]
 async fn put_index(State(engine): State<Sender<Engine>>, Path(id): Path<IndexId>) {
+    engine.del_index(id.clone()).await;
     engine.add_index(id).await;
+}
+
+#[derive(serde::Deserialize, serde::Serialize, utoipa::ToSchema)]
+pub struct PostIndexAddRequest {
+    pub key: Key,
+    pub text: String,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/text-search/{index}/add",
+    description = "Add an item to the index",
+    params(
+        ("index" = IndexId, Path, description = "Index to add")
+    ),
+    request_body = PostIndexSearchRequest,
+    responses(
+        (status = 200, description = "Add done"),
+    )
+)]
+async fn post_index_add(
+    State(engine): State<Sender<Engine>>,
+    Path(id): Path<IndexId>,
+    extract::Json(request): extract::Json<PostIndexAddRequest>,
+) -> Response {
+    let Some(index) = engine.get_index(id).await else {
+        return (StatusCode::NOT_FOUND, "").into_response();
+    };
+
+    index.add(request.key, request.text).await;
+    (StatusCode::OK, "").into_response()
 }
 
 #[derive(serde::Deserialize, serde::Serialize, utoipa::ToSchema)]

@@ -3,15 +3,125 @@
  * SPDX-License-Identifier: LicenseRef-ScyllaDB-Source-Available-1.0
  */
 
-#[cfg(not(feature = "opensearch"))]
-//mod usearch;
+use reqwest::Client;
+use std::net::SocketAddr;
+use std::num::NonZeroUsize;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt;
 use tracing_subscriber::prelude::*;
+use vector_store::IndexId;
+use vector_store::Key;
+use vector_store::Limit;
+use vector_store::httproutes::PostIndexAddRequest;
+use vector_store::httproutes::PostIndexSearchRequest;
 
 fn enable_tracing() {
     tracing_subscriber::registry()
         .with(EnvFilter::try_new("info").unwrap())
         .with(fmt::layer().with_target(false))
         .init();
+}
+
+pub(crate) struct HttpClient {
+    client: Client,
+    url_api: String,
+}
+
+impl HttpClient {
+    pub(crate) fn new(addr: SocketAddr) -> Self {
+        Self {
+            url_api: format!("http://{addr}/api/v1/text-search"),
+            client: Client::new(),
+        }
+    }
+
+    pub(crate) async fn indexes(&self) -> Vec<IndexId> {
+        self.client
+            .get(format!("{}", self.url_api))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap()
+    }
+
+    pub(crate) async fn create(&self, id: &IndexId) {
+        _ = self
+            .client
+            .put(format!("{}/{}", self.url_api, id))
+            .send()
+            .await
+            .unwrap();
+    }
+
+    pub(crate) async fn add(&self, id: &IndexId, key: Key, text: String) {
+        _ = self
+            .client
+            .post(format!("{}/{}/add", self.url_api, id))
+            .json(&PostIndexAddRequest { key, text })
+            .send()
+            .await
+            .unwrap()
+    }
+
+    pub(crate) async fn search(&self, id: &IndexId, text: String, limit: Limit) -> Vec<Key> {
+        self.client
+            .post(format!("{}/{}/search", self.url_api, id))
+            .json(&PostIndexSearchRequest { text, limit })
+            .send()
+            .await
+            .unwrap()
+            .json::<Vec<Key>>()
+            .await
+            .unwrap()
+    }
+}
+
+#[tokio::test]
+async fn simple_create_search_delete_opensearch() {
+    crate::enable_tracing();
+
+    let index_factory = {
+        let addr = dotenvy::var("OPENSEARCH_ADDRESS").unwrap_or("http://localhost".to_string());
+        let port = dotenvy::var("OPENSEARCH_PORT").unwrap_or("9200".to_string());
+        let addr = format!("{addr}:{port}");
+        vector_store::new_index_factory(addr).unwrap()
+    };
+
+    let (_server_actor, addr) =
+        vector_store::run(SocketAddr::from(([127, 0, 0, 1], 0)).into(), index_factory)
+            .await
+            .unwrap();
+    let client = HttpClient::new(addr);
+
+    assert!(client.indexes().await.is_empty());
+
+    let id = "tstidx".to_string().into();
+
+    client.create(&id).await;
+
+    let indexes = client.indexes().await;
+    assert_eq!(indexes.len(), 1);
+    assert_eq!(indexes.get(0).unwrap(), &id);
+
+    client
+        .add(&id, "key0".to_string().into(), "dead".to_string())
+        .await;
+    client
+        .add(&id, "key1".to_string().into(), "beef".to_string())
+        .await;
+
+    let found = client
+        .search(&id, "dea".to_string(), NonZeroUsize::new(1).unwrap().into())
+        .await;
+    assert_eq!(found.len(), 0);
+
+    client.create(&id).await;
+
+    let found = client
+        .search(&id, "dea".to_string(), NonZeroUsize::new(1).unwrap().into())
+        .await;
+
+    assert_eq!(found.len(), 0);
 }
