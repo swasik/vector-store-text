@@ -7,20 +7,22 @@
 #![allow(dead_code)]
 
 use crate::IndexFactory;
-use crate:: Limit;
 use crate::IndexId;
 use crate::Key;
+use crate::Limit;
 use crate::index::actor::Index;
+use opensearch::CreateParts;
+use opensearch::GetParts;
 use opensearch::IndexParts;
-use opensearch::SearchParts;
 use opensearch::OpenSearch;
+use opensearch::SearchParts;
 use opensearch::http::Url;
 use opensearch::http::transport::SingleNodeConnectionPool;
 use opensearch::http::transport::TransportBuilder;
 use opensearch::indices::IndicesCreateParts;
 use opensearch::indices::IndicesDeleteParts;
-use serde_json::json;
 use serde_json::Value;
+use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tokio::sync::mpsc;
@@ -61,6 +63,7 @@ async fn create_index(id: &IndexId, client: Arc<OpenSearch>) -> anyhow::Result<(
     _ = client
         .indices()
         .create(opensearch::indices::IndicesCreateParts::Index(&id.0))
+        /*
         .body(json!({
             "mappings": {
                 "properties": {
@@ -69,6 +72,7 @@ async fn create_index(id: &IndexId, client: Arc<OpenSearch>) -> anyhow::Result<(
                 }
             }
         }))
+        */
         .send()
         .await?;
     Ok(())
@@ -136,24 +140,27 @@ async fn process(msg: Index, id: Arc<IndexId>, client: Arc<OpenSearch>) {
         Index::Add {
             article_id,
             article_content,
-        } => add(id, article_id, article_content, client).await,
+            tx,
+        } => {
+            add(id, article_id, article_content, client).await;
+            _ = tx.send(());
+        }
         Index::Remove { article_id } => {
             let _ = article_id;
         }
-        Index::Search { text, limit, tx } => 
-        {
+        Index::Search { text, limit, tx } => {
             _ = tx.send(query(id, text, limit, client).await);
         }
     }
 }
 
 async fn add(id: Arc<IndexId>, article_id: Key, article_content: String, client: Arc<OpenSearch>) {
-    _ = client
-        .index(IndexParts::IndexId(&id.0, &article_id.0.to_string()))
-        .body(json!({
+    let response = client
+        .create(CreateParts::IndexId(&id.0, &article_id.0.to_string()))
+        .body(dbg!(json!({
             "article_id": article_id,
             "article_content": article_content,
-        }))
+        })))
         .send()
         .await
         .map_or_else(
@@ -163,31 +170,52 @@ async fn add(id: Arc<IndexId>, article_id: Key, article_content: String, client:
         .map_err(|err| {
             error!("add: unable to add text for a key {article_id}: {err}");
         });
+    //dbg!(dbg!(response).unwrap().text().await);
+    let response = client
+        .get(GetParts::IndexId(&id.0, &article_id.0.to_string()))
+        .send()
+        .await
+        .map_or_else(
+            Err,
+            opensearch::http::response::Response::error_for_status_code,
+        )
+        .map_err(|err| {
+            error!("add: unable to get text for a key {article_id}: {err}");
+        });
+    //dbg!(dbg!(response).unwrap().text().await);
 }
 
-async fn query(id: Arc<IndexId>, text_query: String, limit : Limit, client: Arc<OpenSearch>) -> anyhow::Result<Vec<Key>> {
-    let response = client
-        .search(SearchParts::Index(&[&id.0]))
-        .from(0)
-        .size(limit.0.get() as i64)
-        .body(json!({
-            "query": {
-                "match": {
-                    "message": text_query
+async fn query(
+    id: Arc<IndexId>,
+    text_query: String,
+    limit: Limit,
+    client: Arc<OpenSearch>,
+) -> anyhow::Result<Vec<Key>> {
+    let response = dbg!(
+        client
+            .search(SearchParts::Index(&[dbg!(&id.0)]))
+            .from(0)
+            .size(limit.0.get() as i64)
+            .body(dbg!(json!({
+                "query": {
+                    "simple_query_string": {
+                        "query": text_query,
+                        "fields": ["article_content"]
+                    }
                 }
-            }
-        }))
-        .send()
-        .await?;
+            })))
+            .send()
+            .await
+    )?;
 
-    let response_body = response.json::<Value>().await?;
+    let response_body = dbg!(response.json::<Value>().await)?;
     let mut response = Vec::new();
     let Some(hits_arr) = response_body["hits"]["hits"].as_array() else {
         error!("query: unable to parse response hits");
         return Ok(Vec::new());
     };
     for hit in hits_arr {
-        let Some(article_str) = hit["_source"]["article_id"].as_str() else {
+        let Some(article_str) = dbg!(hit)["_id"].as_str() else {
             error!("query: unable to parse response response article_id");
             continue;
         };

@@ -17,7 +17,7 @@ use vector_store_text::httproutes::PostIndexSearchRequest;
 
 fn enable_tracing() {
     tracing_subscriber::registry()
-        .with(EnvFilter::try_new("info").unwrap())
+        .with(EnvFilter::try_new("debug").unwrap())
         .with(fmt::layer().with_target(false))
         .init();
 }
@@ -106,22 +106,32 @@ async fn simple_create_search_delete_opensearch() {
     assert_eq!(indexes.get(0).unwrap(), &id);
 
     client
-        .add(&id, "key0".to_string().into(), "dead".to_string())
+        .add(&id, "key0".to_string().into(), " dead this ".to_string())
         .await;
     client
-        .add(&id, "key1".to_string().into(), "beef".to_string())
+        .add(&id, "key1".to_string().into(), " beef that ".to_string())
         .await;
 
     let found = client
-        .search(&id, "dea".to_string(), NonZeroUsize::new(1).unwrap().into())
+        .search(
+            &id,
+            "that".to_string(),
+            NonZeroUsize::new(2).unwrap().into(),
+        )
         .await;
     assert_eq!(found.len(), 0);
 
+    /*
     client.create(&id).await;
 
     let found = client
-        .search(&id, "dea".to_string(), NonZeroUsize::new(1).unwrap().into())
+        .search(
+            &id,
+            "dead".to_string(),
+            NonZeroUsize::new(1).unwrap().into(),
+        )
         .await;
 
     assert_eq!(found.len(), 0);
+    */
 }

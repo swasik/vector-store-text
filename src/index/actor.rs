@@ -14,6 +14,7 @@ pub enum Index {
     Add {
         article_id: Key,
         article_content: String,
+        tx: oneshot::Sender<()>,
     },
     Remove {
         article_id: Key,
@@ -33,9 +34,15 @@ pub(crate) trait IndexExt {
 
 impl IndexExt for mpsc::Sender<Index> {
     async fn add(&self, article_id: Key, article_content: String) {
-        self.send(Index::Add { article_id, article_content })
-            .await
-            .expect("internal actor should receive request");
+        let (tx, rx) = oneshot::channel();
+        self.send(Index::Add {
+            article_id,
+            article_content,
+            tx,
+        })
+        .await
+        .expect("internal actor should receive request");
+        _ = rx.await;
     }
 
     async fn remove(&self, article_id: Key) {
