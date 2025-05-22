@@ -155,12 +155,12 @@ async fn process(msg: Index, id: Arc<IndexId>, client: Arc<OpenSearch>) {
 }
 
 async fn add(id: Arc<IndexId>, article_id: Key, article_content: String, client: Arc<OpenSearch>) {
-    let response = client
+    _ = client
         .create(CreateParts::IndexId(&id.0, &article_id.0.to_string()))
-        .body(dbg!(json!({
+        .body(json!({
             "article_id": article_id,
             "article_content": article_content,
-        })))
+        }))
         .send()
         .await
         .map_or_else(
@@ -170,19 +170,6 @@ async fn add(id: Arc<IndexId>, article_id: Key, article_content: String, client:
         .map_err(|err| {
             error!("add: unable to add text for a key {article_id}: {err}");
         });
-    //dbg!(dbg!(response).unwrap().text().await);
-    let response = client
-        .get(GetParts::IndexId(&id.0, &article_id.0.to_string()))
-        .send()
-        .await
-        .map_or_else(
-            Err,
-            opensearch::http::response::Response::error_for_status_code,
-        )
-        .map_err(|err| {
-            error!("add: unable to get text for a key {article_id}: {err}");
-        });
-    //dbg!(dbg!(response).unwrap().text().await);
 }
 
 async fn query(
@@ -191,31 +178,29 @@ async fn query(
     limit: Limit,
     client: Arc<OpenSearch>,
 ) -> anyhow::Result<Vec<Key>> {
-    let response = dbg!(
-        client
-            .search(SearchParts::Index(&[dbg!(&id.0)]))
-            .from(0)
-            .size(limit.0.get() as i64)
-            .body(dbg!(json!({
-                "query": {
-                    "simple_query_string": {
-                        "query": text_query,
-                        "fields": ["article_content"]
-                    }
+    let response = client
+        .search(SearchParts::Index(&[&id.0]))
+        .from(0)
+        .size(limit.0.get() as i64)
+        .body(json!({
+            "query": {
+                "simple_query_string": {
+                    "query": text_query,
+                    "fields": ["article_content"]
                 }
-            })))
-            .send()
-            .await
-    )?;
+            }
+        }))
+        .send()
+        .await?;
 
-    let response_body = dbg!(response.json::<Value>().await)?;
+    let response_body = response.json::<Value>().await?;
     let mut response = Vec::new();
     let Some(hits_arr) = response_body["hits"]["hits"].as_array() else {
         error!("query: unable to parse response hits");
         return Ok(Vec::new());
     };
     for hit in hits_arr {
-        let Some(article_str) = dbg!(hit)["_id"].as_str() else {
+        let Some(article_str) = hit["_id"].as_str() else {
             error!("query: unable to parse response response article_id");
             continue;
         };

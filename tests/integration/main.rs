@@ -6,6 +6,8 @@
 use reqwest::Client;
 use std::net::SocketAddr;
 use std::num::NonZeroUsize;
+use std::time::Duration;
+use tokio::time;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt;
 use tracing_subscriber::prelude::*;
@@ -17,7 +19,7 @@ use vector_store_text::httproutes::PostIndexSearchRequest;
 
 fn enable_tracing() {
     tracing_subscriber::registry()
-        .with(EnvFilter::try_new("debug").unwrap())
+        .with(EnvFilter::try_new("info").unwrap())
         .with(fmt::layer().with_target(false))
         .init();
 }
@@ -112,26 +114,30 @@ async fn simple_create_search_delete_opensearch() {
         .add(&id, "key1".to_string().into(), " beef that ".to_string())
         .await;
 
+    time::timeout(Duration::from_secs(10), async {
+        loop {
+            let found = client
+                .search(
+                    &id,
+                    "that".to_string(),
+                    NonZeroUsize::new(1).unwrap().into(),
+                )
+                .await;
+            if !found.is_empty() {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
+
     let found = client
         .search(
             &id,
             "that".to_string(),
-            NonZeroUsize::new(2).unwrap().into(),
-        )
-        .await;
-    assert_eq!(found.len(), 0);
-
-    /*
-    client.create(&id).await;
-
-    let found = client
-        .search(
-            &id,
-            "dead".to_string(),
             NonZeroUsize::new(1).unwrap().into(),
         )
         .await;
-
-    assert_eq!(found.len(), 0);
-    */
+    assert_eq!(found.len(), 1);
+    assert_eq!(found.get(0).unwrap().as_ref(), "key1");
 }
