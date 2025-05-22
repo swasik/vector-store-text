@@ -80,7 +80,7 @@ async fn put_index(State(engine): State<Sender<Engine>>, Path(id): Path<IndexId>
 
 #[derive(serde::Deserialize, serde::Serialize, utoipa::ToSchema)]
 pub struct PostIndexAddRequest {
-    pub key: Key,
+    pub id: Key,
     pub text: String,
 }
 
@@ -105,7 +105,7 @@ async fn post_index_add(
         return (StatusCode::NOT_FOUND, "").into_response();
     };
 
-    index.add(request.key, request.text).await;
+    index.add(request.id, request.text).await;
     (StatusCode::OK, "").into_response()
 }
 

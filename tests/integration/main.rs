@@ -59,7 +59,7 @@ impl HttpClient {
         _ = self
             .client
             .post(format!("{}/{}/add", self.url_api, id))
-            .json(&PostIndexAddRequest { key, text })
+            .json(&PostIndexAddRequest { id: key, text })
             .send()
             .await
             .unwrap()
