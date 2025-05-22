@@ -7,10 +7,12 @@
 #![allow(dead_code)]
 
 use crate::IndexFactory;
+use crate:: Limit;
 use crate::IndexId;
 use crate::Key;
 use crate::index::actor::Index;
 use opensearch::IndexParts;
+use opensearch::SearchParts;
 use opensearch::OpenSearch;
 use opensearch::http::Url;
 use opensearch::http::transport::SingleNodeConnectionPool;
@@ -18,6 +20,7 @@ use opensearch::http::transport::TransportBuilder;
 use opensearch::indices::IndicesCreateParts;
 use opensearch::indices::IndicesDeleteParts;
 use serde_json::json;
+use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tokio::sync::mpsc;
@@ -137,10 +140,9 @@ async fn process(msg: Index, id: Arc<IndexId>, client: Arc<OpenSearch>) {
         Index::Remove { article_id } => {
             let _ = article_id;
         }
-        Index::Search { text, limit, tx } => {
-            let _ = text;
-            let _ = limit;
-            _ = tx.send(Ok(vec![]));
+        Index::Search { text, limit, tx } => 
+        {
+            _ = tx.send(query(id, text, limit, client).await);
         }
     }
 }
@@ -161,4 +163,35 @@ async fn add(id: Arc<IndexId>, article_id: Key, article_content: String, client:
         .map_err(|err| {
             error!("add: unable to add text for a key {article_id}: {err}");
         });
+}
+
+async fn query(id: Arc<IndexId>, text_query: String, limit : Limit, client: Arc<OpenSearch>) -> anyhow::Result<Vec<Key>> {
+    let response = client
+        .search(SearchParts::Index(&[&id.0]))
+        .from(0)
+        .size(limit.0.get() as i64)
+        .body(json!({
+            "query": {
+                "match": {
+                    "message": text_query
+                }
+            }
+        }))
+        .send()
+        .await?;
+
+    let response_body = response.json::<Value>().await?;
+    let mut response = Vec::new();
+    let Some(hits_arr) = response_body["hits"]["hits"].as_array() else {
+        error!("query: unable to parse response hits");
+        return Ok(Vec::new());
+    };
+    for hit in hits_arr {
+        let Some(article_str) = hit["_source"]["article_id"].as_str() else {
+            error!("query: unable to parse response response article_id");
+            continue;
+        };
+        response.push(article_str.to_string().into());
+    }
+    Ok(response)
 }
