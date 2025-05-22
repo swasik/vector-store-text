@@ -4,7 +4,7 @@
 # TODO: review and limit dependencies and features
 
 [package]
-name = "vector-store"
+name = "vector-store-text"
 version = "0.1.0"
 edition = "2024"
 

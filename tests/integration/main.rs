@@ -9,11 +9,11 @@ use std::num::NonZeroUsize;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt;
 use tracing_subscriber::prelude::*;
-use vector_store::IndexId;
-use vector_store::Key;
-use vector_store::Limit;
-use vector_store::httproutes::PostIndexAddRequest;
-use vector_store::httproutes::PostIndexSearchRequest;
+use vector_store_text::IndexId;
+use vector_store_text::Key;
+use vector_store_text::Limit;
+use vector_store_text::httproutes::PostIndexAddRequest;
+use vector_store_text::httproutes::PostIndexSearchRequest;
 
 fn enable_tracing() {
     tracing_subscriber::registry()
@@ -86,11 +86,11 @@ async fn simple_create_search_delete_opensearch() {
         let addr = dotenvy::var("OPENSEARCH_ADDRESS").unwrap_or("http://localhost".to_string());
         let port = dotenvy::var("OPENSEARCH_PORT").unwrap_or("9200".to_string());
         let addr = format!("{addr}:{port}");
-        vector_store::new_index_factory(addr).unwrap()
+        vector_store_text::new_index_factory(addr).unwrap()
     };
 
     let (_server_actor, addr) =
-        vector_store::run(SocketAddr::from(([127, 0, 0, 1], 0)).into(), index_factory)
+        vector_store_text::run(SocketAddr::from(([127, 0, 0, 1], 0)).into(), index_factory)
             .await
             .unwrap();
     let client = HttpClient::new(addr);

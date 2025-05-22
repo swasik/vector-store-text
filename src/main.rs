@@ -33,12 +33,12 @@ async fn main() -> anyhow::Result<()> {
         let addr = dotenvy::var("OPENSEARCH_ADDRESS").unwrap_or("http://localhost".to_string());
         let port = dotenvy::var("OPENSEARCH_PORT").unwrap_or("9200".to_string());
         let addr = format!("{addr}:{port}");
-        vector_store::new_index_factory(addr)?
+        vector_store_text::new_index_factory(addr)?
     };
 
-    let (_server_actor, addr) = vector_store::run(scylla_usearch_addr, index_factory).await?;
+    let (_server_actor, addr) = vector_store_text::run(scylla_usearch_addr, index_factory).await?;
     tracing::info!("listening on {addr}");
-    vector_store::wait_for_shutdown().await;
+    vector_store_text::wait_for_shutdown().await;
 
     Ok(())
 }
