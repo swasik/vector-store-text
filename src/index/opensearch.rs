@@ -61,6 +61,7 @@ async fn create_index(id: &IndexId, client: Arc<OpenSearch>) -> anyhow::Result<(
         .body(json!({
             "mappings": {
                 "properties": {
+                    "article_id": { "type" : "text" },
                     "article_content": { "type" : "text" }
                 }
             }
@@ -145,9 +146,10 @@ async fn process(msg: Index, id: Arc<IndexId>, client: Arc<OpenSearch>) {
 }
 
 async fn add(id: Arc<IndexId>, article_id: Key, article_content: String, client: Arc<OpenSearch>) {
-    let response = client
+    _ = client
         .index(IndexParts::IndexId(&id.0, &article_id.0.to_string()))
         .body(json!({
+            "article_id": article_id,
             "article_content": article_content,
         }))
         .send()
